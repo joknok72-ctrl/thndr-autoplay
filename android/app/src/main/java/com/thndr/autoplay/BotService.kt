@@ -51,6 +51,9 @@ class BotService : Service() {
     private var stopFlag = false
     @Volatile private var manualNext = false
     @Volatile private var forceReplan = false
+    @Volatile private var confirmedPieces: List<com.thndr.autoplay.engine.Piece?>? = null
+    @Volatile private var pendingScreen: Screen? = null
+    private var editor: PieceEditorOverlay? = null
     private val prefs by lazy { getSharedPreferences("bot", Context.MODE_PRIVATE) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -64,6 +67,7 @@ class BotService : Service() {
                 if (data != null) setupProjection(code, data)
                 overlay = OverlayController(this, { toggle() }, { manualNext = true }, { forceReplan = true }).also { it.show() }
                 guide = GuideOverlay(this).also { it.show() }
+                editor = PieceEditorOverlay(this, { pieces -> editor?.hide(); confirmedPieces = pieces }, { editor?.hide(); pendingScreen = null; guide?.setMessage("تم الإلغاء — اضغط «خطة» تاني") })
                 report("جاهز — اضغط ▶ فوق اللعبة")
             }
             ACTION_TOGGLE -> toggle()
@@ -157,10 +161,28 @@ class BotService : Service() {
                     if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
                     lastBoard = scr.boardString()
                     if (scr.piecesFound == 0) { guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }
-                    val plan = AI.plan(scr.board, scr.bonus, scr.tray.map { it?.piece }, 0, 1, prefs.getInt("level", 3))
+                    // Show what we READ and let the user confirm/fix the shapes ("he draws the cubes himself")
+                    pendingScreen = scr
+                    guide?.setMessage("راجع القطع الثلاث وعدّلها لو فيه غلط، ثم ✓")
+                    report("راجع القطع ثم ✓")
+                    editor?.show(scr.tray.map { it?.piece })
+                }
+                val confirmed = confirmedPieces
+                val ps = pendingScreen
+                if (confirmed != null && ps != null) {
+                    confirmedPieces = null; pendingScreen = null
+                    // tray rect per slot: use the read rect if present, else a default slot box under the board
+                    val slotW = ps.width / 3f
+                    val plan = AI.plan(ps.board, ps.bonus, confirmed, 0, 1, prefs.getInt("level", 3))
                     if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
-                    steps = plan.moves.map { m -> val tp = scr.tray[m.slot]!!; GuideOverlay.Step(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), m.slot, m.r, m.c, m.points) }
-                    cur = 0; frozen = scr
+                    steps = plan.moves.map { m ->
+                        val piece = confirmed[m.slot]!!
+                        val tp = ps.tray.getOrNull(m.slot)
+                        val rect = if (tp != null) RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat())
+                                   else RectF(m.slot * slotW + slotW * 0.2f, ps.by1 + ps.pitch * 3.2f, (m.slot + 1) * slotW - slotW * 0.2f, ps.by1 + ps.pitch * 5.2f)
+                        GuideOverlay.Step(piece, rect, m.slot, m.r, m.c, m.points)
+                    }
+                    cur = 0; frozen = ps
                     vibrate(longArrayOf(0, 30, 40, 30))
                     guide?.flash("الخطة جاهزة: ${steps.size} قطع — حطهم بالترتيب")
                 }
@@ -327,7 +349,7 @@ class BotService : Service() {
     }
 
     override fun onDestroy() {
-        stopLoop(); overlay?.hide(); guide?.hide(); vdisplay?.release(); reader?.close(); projection?.stop()
+        stopLoop(); overlay?.hide(); guide?.hide(); editor?.hide(); vdisplay?.release(); reader?.close(); projection?.stop()
         super.onDestroy()
     }
 }
