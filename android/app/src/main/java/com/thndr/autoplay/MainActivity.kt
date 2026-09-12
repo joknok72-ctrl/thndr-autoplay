@@ -30,12 +30,16 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnAccess).setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             if (!Settings.canDrawOverlays(this)) { toast("فعّل إذن الظهور فوق التطبيقات أولاً"); return@setOnClickListener }
-            if (!GestureService.isRunning) { toast("فعّل خدمة الوصول THNDR AutoPlay أولاً"); return@setOnClickListener }
+            if (prefs.getInt("mode", 0) == 1 && !GestureService.isRunning) { toast("وضع البوت التلقائي يحتاج خدمة الوصول — فعّلها أو اختر وضع المرشد"); return@setOnClickListener }
             val mpm = getSystemService(MediaProjectionManager::class.java)
             startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJ)
         }
         findViewById<Button>(R.id.btnStop).setOnClickListener { startService(Intent(this, BotService::class.java).setAction(BotService.ACTION_STOP)) }
         findViewById<Button>(R.id.btnResetCal).setOnClickListener { prefs.edit().remove("offX").remove("offY").putBoolean("calibrated", false).apply(); toast("تم تصفير المعايرة") }
+
+        val rgMode = findViewById<android.widget.RadioGroup>(R.id.rgMode)
+        rgMode.check(if (prefs.getInt("mode", 0) == 1) R.id.modeAuto else R.id.modeGuide)
+        rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", if (id == R.id.modeAuto) 1 else 0).apply() }
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3) - 1
@@ -63,7 +67,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun tick() {
         findViewById<TextView>(R.id.stOverlay).text = if (Settings.canDrawOverlays(this)) "✅ الظهور فوق التطبيقات" else "❌ الظهور فوق التطبيقات"
-        findViewById<TextView>(R.id.stAccess).text = if (GestureService.isRunning) "✅ خدمة الوصول (الإيماءات)" else "❌ خدمة الوصول (الإيماءات)"
+        findViewById<TextView>(R.id.stAccess).text = if (GestureService.isRunning) "✅ خدمة الوصول (الإيماءات)" else "⚪ خدمة الوصول (اختيارية — لوضع البوت التلقائي فقط)"
         findViewById<TextView>(R.id.stBot).text = "الحالة: ${BotService.status}\nحركات: ${BotService.movesDone}\n${BotService.lastBoard}"
         ui.postDelayed({ tick() }, 800)
     }
@@ -73,7 +77,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_PROJ && resultCode == Activity.RESULT_OK && data != null) {
             val i = Intent(this, BotService::class.java).setAction(BotService.ACTION_START).putExtra(BotService.EXTRA_CODE, resultCode).putExtra(BotService.EXTRA_DATA, data)
             startForegroundService(i)
-            toast("افتح لعبة THNDR واضغط ▶ الزر العائم")
+            toast(if (prefs.getInt("mode", 0) == 1) "افتح لعبة THNDR واضغط ▶ — البوت هيسحب لوحده" else "افتح لعبة THNDR واضغط ▶ — هيوريك فين تحط كل قطعة")
         }
     }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()

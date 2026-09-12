@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -45,6 +46,7 @@ class BotService : Service() {
     private var worker: HandlerThread? = null
     private var handler: Handler? = null
     private var overlay: OverlayController? = null
+    private var guide: GuideOverlay? = null
     private var W = 0; private var H = 0
     private var stopFlag = false
     private val prefs by lazy { getSharedPreferences("bot", Context.MODE_PRIVATE) }
@@ -59,6 +61,7 @@ class BotService : Service() {
                 val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
                 if (data != null) setupProjection(code, data)
                 overlay = OverlayController(this) { toggle() }.also { it.show() }
+                guide = GuideOverlay(this).also { it.show() }
                 report("جاهز — اضغط ▶ فوق اللعبة")
             }
             ACTION_TOGGLE -> toggle()
@@ -103,10 +106,11 @@ class BotService : Service() {
     }
 
     private fun toggle() { if (running) stopLoop() else startLoop() }
+    private fun isAuto() = prefs.getInt("mode", 0) == 1   // 0 = guide (you drag, it shows where), 1 = auto (bot drags)
 
     private fun startLoop() {
         if (projection == null) { report("لازم تسمح بتسجيل الشاشة أولاً"); return }
-        if (!GestureService.isRunning) { report("فعّل خدمة الوصول (Accessibility) للتطبيق"); return }
+        if (isAuto() && !GestureService.isRunning) { report("فعّل خدمة الوصول (Accessibility) للتطبيق"); return }
         stopFlag = false; running = true; overlay?.setRunning(true)
         worker = HandlerThread("bot").also { it.start(); handler = Handler(it.looper) }
         handler?.post { loop() }
@@ -115,12 +119,105 @@ class BotService : Service() {
     private fun stopLoop() {
         stopFlag = true; running = false; overlay?.setRunning(false)
         worker?.quitSafely(); worker = null
+        guide?.clear()
         report("متوقف")
     }
 
     // ---------- main loop ----------
     private var idleCount = 0
-    private fun loop() {
+    private fun loop() { if (isAuto()) autoLoop() else guideLoop() }
+
+    /** Guide mode: read screen → plan 3 pieces → show ONE hint at a time → detect the drop → next hint. */
+    private fun guideLoop() {
+        var plannedSig = ""
+        var queue: MutableList<Pair<com.thndr.autoplay.engine.Move, com.thndr.autoplay.vision.TrayPiece>> = mutableListOf()
+        var step = 0; var total = 0
+        var expectBoard: IntArray? = null
+        var lastPieceCount = -1
+        while (!stopFlag) {
+            try {
+                val bmp = capture() ?: run { Thread.sleep(150); null } ?: continue
+                val scr = try { ScreenParser.parse(bmp) } catch (e: ScreenParser.ParseException) {
+                    guide?.setHint(null); guide?.setMessage("مش شايف اللوحة — افتح اللعبة"); report("مش شايف اللوحة (${e.message})"); Thread.sleep(600); continue
+                }
+                lastBoard = scr.boardString()
+                val found = scr.piecesFound
+                if (found == 0) {
+                    queue.clear(); plannedSig = ""
+                    idleCount++
+                    guide?.setHint(null); guide?.setMessage(if (idleCount > 5) "مافيش قطع — انتهت الجولة أو اللعبة" else "بانتظار القطع الجديدة…")
+                    report("بانتظار القطع…"); Thread.sleep(500); continue
+                }
+                idleCount = 0
+
+                // A piece was consumed (tray count dropped) → advance to next hint
+                if (queue.isNotEmpty() && found < lastPieceCount) {
+                    queue.removeAt(0); step++
+                    movesDone++
+                    if (queue.isEmpty()) { plannedSig = "" }
+                }
+                lastPieceCount = found
+
+                // Need a (re)plan: new set of pieces, or board diverged from expectation
+                val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
+                val needPlan = queue.isEmpty() || (expectBoard != null && !boardsCompatible(expectBoard!!, scr.board))
+                if (needPlan) {
+                    if (sig == plannedSig) { Thread.sleep(250); continue }
+                    guide?.setHint(null); guide?.setMessage("بفكر في أفضل خطة…")
+                    report("بفكر… ($found قطع)")
+                    val pieces = scr.tray.map { it?.piece }
+                    val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
+                    plannedSig = sig
+                    if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(1200); continue }
+                    queue = plan.moves.map { it to scr.tray[it.slot]!! }.toMutableList()
+                    step = 1; total = queue.size
+                }
+
+                // Show current hint, matched to the CURRENT tray (slots shift when a piece is consumed)
+                val (mv, tpPlanned) = queue[0]
+                val tp = matchTrayPiece(scr, tpPlanned) ?: run { queue.clear(); plannedSig = ""; null } ?: continue
+                val trayIdx = scr.tray.indexOf(tp)
+                val where = describe(mv.r, mv.c, tp.piece)
+                val pieceName = when (trayIdx) { 0 -> "اليسرى"; 1 -> "الوسطى"; else -> "اليمنى" }
+                val text = "اسحب القطعة $pieceName (" + (trayIdx + 1) + ") → " + where
+                guide?.setHint(GuideOverlay.Hint(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), trayIdx,
+                    scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, mv.r, mv.c, text, step, total, mv.points))
+                report("الخطوة $step/$total: قطعة ${trayIdx + 1} → صف ${mv.r + 1} عمود ${mv.c + 1}")
+                // expected board after this drop (for divergence detection): placed cells become non-empty unless cleared
+                expectBoard = Engine.place(scr.board, scr.bonus, tp.piece, mv.r, mv.c).board
+                Thread.sleep(220)
+            } catch (e: Throwable) {
+                Log.e(TAG, "guide error", e); report("خطأ: ${e.message}"); Thread.sleep(600)
+            }
+        }
+        guide?.clear()
+    }
+
+    /** Same shape (and colors) as planned, in the current tray. */
+    private fun matchTrayPiece(scr: Screen, planned: com.thndr.autoplay.vision.TrayPiece): com.thndr.autoplay.vision.TrayPiece? {
+        val key = planned.piece.toString()
+        return scr.tray.firstOrNull { it != null && it.piece.toString() == key }
+            ?: scr.tray.firstOrNull { it != null && it.piece.cells.map { c -> c.r to c.c } == planned.piece.cells.map { c -> c.r to c.c } }
+    }
+
+    /** Boards are compatible if current has no filled cell where expected is empty (clears may remove cells). */
+    private fun boardsCompatible(expect: IntArray, cur: IntArray): Boolean {
+        var bad = 0
+        for (i in expect.indices) if (cur[i] != 0 && expect[i] == 0) bad++
+        return bad <= 1
+    }
+
+    /** Human-friendly position: "أعلى اليسار، صف 2 عمود 3" using the piece's top-left cube. */
+    private fun describe(r: Int, c: Int, p: com.thndr.autoplay.engine.Piece): String {
+        val cr = r + (p.h - 1) / 2f; val cc = c + (p.w - 1) / 2f
+        val v = when { cr < 3 -> "أعلى"; cr < 6 -> "وسط"; else -> "أسفل" }
+        val hz = when { cc < 3 -> "اليسار"; cc < 6 -> "الوسط"; else -> "اليمين" }
+        val zone = if (v == "وسط" && hz == "الوسط") "قلب اللوحة" else "$v $hz"
+        return "$zone (صف ${r + 1}، عمود ${c + 1})"
+    }
+
+    /** Auto mode: the bot drags the pieces itself via the accessibility service. */
+    private fun autoLoop() {
         var lastSig = ""
         var sameCount = 0
         while (!stopFlag) {
@@ -145,19 +242,21 @@ class BotService : Service() {
                 val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
-                // Execute only the FIRST move, then re-read the screen (robust to clears/animations)
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!
+                // show the same hint while dragging so the user sees what the bot intends
+                guide?.setHint(GuideOverlay.Hint(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), mv.slot,
+                    scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, mv.r, mv.c, "البوت يسحب القطعة ${mv.slot + 1}", 1, 1, mv.points))
                 val ok = performMove(scr, tp, mv.r, mv.c)
                 if (!ok) { report("الإيماءة فشلت"); Thread.sleep(500); continue }
                 movesDone++
                 report("حركة #$movesDone: قطعة ${mv.slot + 1} → (${mv.r + 1},${mv.c + 1}) +${mv.points}")
                 Thread.sleep(prefs.getInt("delay", 650).toLong())
-                // verify & auto-calibrate
                 verifyAndCalibrate(scr, tp, mv.r, mv.c)
             } catch (e: Throwable) {
                 Log.e(TAG, "loop error", e); report("خطأ: ${e.message}"); Thread.sleep(800)
             }
         }
+        guide?.clear()
     }
 
     /**
@@ -207,7 +306,7 @@ class BotService : Service() {
     }
 
     override fun onDestroy() {
-        stopLoop(); overlay?.hide(); vdisplay?.release(); reader?.close(); projection?.stop()
+        stopLoop(); overlay?.hide(); guide?.hide(); vdisplay?.release(); reader?.close(); projection?.stop()
         super.onDestroy()
     }
 }

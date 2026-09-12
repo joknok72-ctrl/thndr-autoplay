@@ -12,7 +12,13 @@
     <TextView android:id="@+id/stAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:layout_marginTop="6dp"/>
     <Button android:id="@+id/btnAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="فتح إعدادات خدمة الوصول"/>
 
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2) الإعدادات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2) طريقة اللعب" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <RadioGroup android:id="@+id/rgMode" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+        <RadioButton android:id="@+id/modeGuide" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🧭 المرشد (موصى به): إنت تسحب، هو يوريك فوق اللعبة بالظبط فين تحط كل قطعة — واحدة واحدة"/>
+        <RadioButton android:id="@+id/modeAuto" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🤖 البوت التلقائي: يسحب القطع لوحده (يحتاج خدمة الوصول، وقد لا يعمل مع كل الأجهزة)"/>
+    </RadioGroup>
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) الإعدادات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="قوة الذكاء الاصطناعي" android:textColor="#CFE1F7"/>
     <SeekBar android:id="@+id/seekLevel" android:layout_width="match_parent" android:layout_height="wrap_content"/>
     <TextView android:id="@+id/lblLevel" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
@@ -24,10 +30,10 @@
     <TextView android:id="@+id/lblMove" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
     <Button android:id="@+id/btnResetCal" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="تصفير المعايرة التلقائية" style="?attr/borderlessButtonStyle" android:textColor="#7F97B8"/>
 
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) التشغيل" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="4) التشغيل" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="56dp" android:text="▶ ابدأ (تسجيل الشاشة + زر عائم)" android:backgroundTint="#059669"/>
     <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="■ إيقاف البوت" android:backgroundTint="#E53935"/>
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block، وبعدين اضغط الزر العائم ▶. البوت هيقرأ اللوحة والقطع ويلعب لوحده لحد ما تخلص اللعبة." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block، وبعدين اضغط الزر العائم ▶.\n\nوضع المرشد: هيظهر إطار أبيض حول القطعة اللي عليها الدور، وشبح مضيء على اللوحة في المكان الصحيح بالظبط، وسهم بينهم. اسحب القطعة للشبح. أول ما تنزل، هيوريك القطعة التالية تلقائيًا." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
 
     <TextView android:id="@+id/stBot" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:fontFamily="monospace" android:layout_marginTop="12dp" android:layoutDirection="ltr" android:textDirection="ltr"/>
 </LinearLayout>
