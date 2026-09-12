@@ -39,7 +39,10 @@ class MainActivity : AppCompatActivity() {
 
         val rgMode = findViewById<android.widget.RadioGroup>(R.id.rgMode)
         rgMode.check(if (prefs.getInt("mode", 0) == 1) R.id.modeAuto else R.id.modeGuide)
-        rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", if (id == R.id.modeAuto) 1 else 0).apply() }
+        val autoOnly = findViewById<android.view.View>(R.id.autoOnly); val resetCal = findViewById<Button>(R.id.btnResetCal)
+        fun refreshMode() { val auto = prefs.getInt("mode", 0) == 1; autoOnly.visibility = if (auto) android.view.View.VISIBLE else android.view.View.GONE; resetCal.visibility = autoOnly.visibility }
+        rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", if (id == R.id.modeAuto) 1 else 0).apply(); refreshMode() }
+        refreshMode()
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3) - 1

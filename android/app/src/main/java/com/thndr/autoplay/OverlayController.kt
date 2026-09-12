@@ -15,12 +15,13 @@ import android.widget.TextView
 import kotlin.math.abs
 
 /** Floating ▶/■ button + status line drawn over the game. Draggable. */
-class OverlayController(private val ctx: Context, private val onToggle: () -> Unit) {
+class OverlayController(private val ctx: Context, private val onToggle: () -> Unit, private val onNext: () -> Unit = {}, private val onReplan: () -> Unit = {}) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private var root: LinearLayout? = null
     private lateinit var btn: TextView
     private lateinit var status: TextView
+    private lateinit var nextBtn: TextView
     private val lp = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT
@@ -42,7 +43,16 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
                 background = GradientDrawable().apply { cornerRadius = 12 * d; setColor(Color.parseColor("#CC041A33")) }
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = (8 * d).toInt() }
             }
-            row.addView(btn); row.addView(status)
+            nextBtn = TextView(ctx).apply {
+                text = "التالي ▶"; textSize = 13f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setPadding((12 * d).toInt(), 0, (12 * d).toInt(), 0)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, (40 * d).toInt()).apply { marginStart = (8 * d).toInt() }
+                background = GradientDrawable().apply { cornerRadius = 20 * d; setColor(Color.parseColor("#059669")) }
+                visibility = View.GONE
+                setOnClickListener { onNext() }
+                setOnLongClickListener { onReplan(); true }
+            }
+            row.addView(btn); row.addView(nextBtn); row.addView(status)
             var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
             row.setOnTouchListener { _, e ->
                 when (e.action) {
@@ -57,6 +67,7 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
             BotService.listener = { s -> main.post { if (root != null) status.text = s } }
         }
     }
-    fun setRunning(r: Boolean) { main.post { if (root != null) { btn.text = if (r) "■" else "▶"; (btn.background as GradientDrawable).setColor(Color.parseColor(if (r) "#E53935" else "#1B6BC0")) } } }
+    fun setRunning(r: Boolean) { main.post { if (root != null) { btn.text = if (r) "■" else "▶"; (btn.background as GradientDrawable).setColor(Color.parseColor(if (r) "#E53935" else "#1B6BC0")); if (!r) nextBtn.visibility = View.GONE } } }
+    fun setNextVisible(v: Boolean) { main.post { if (root != null) nextBtn.visibility = if (v) View.VISIBLE else View.GONE } }
     fun hide() { main.post { root?.let { runCatching { wm.removeView(it) } }; root = null; BotService.listener = null } }
 }

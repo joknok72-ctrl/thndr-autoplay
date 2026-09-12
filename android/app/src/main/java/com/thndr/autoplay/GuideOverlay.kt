@@ -13,11 +13,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Full-screen, touch-transparent overlay that shows the player EXACTLY where to drop the current piece:
- *  - white pulsing frame + number around the tray piece to pick up
- *  - glowing ghost of the piece on the target board cells (blue/orange as the real cubes)
- *  - arrow from the piece to the target + short Arabic instruction
- * One piece at a time — never distracting.
+ * Touch-transparent overlay. Shows the WHOLE plan (3 dim ghosts numbered 1-2-3, like the web version)
+ * while only the CURRENT step is bright & pulsing with an arrow — so the player sees the big picture
+ * without being distracted. Done steps disappear.
  */
 class GuideOverlay(ctx: Context) : View(ctx) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
@@ -31,102 +29,129 @@ class GuideOverlay(ctx: Context) : View(ctx) {
         PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
 
-    // ---- state (screen pixel coords) ----
-    data class Hint(
-        val piece: Piece, val pieceRect: RectF, val pieceIndex: Int,          // tray piece
-        val bx0: Float, val by0: Float, val pitch: Float, val r: Int, val c: Int, // target on board
-        val text: String, val step: Int, val total: Int, val points: Int
+    /** One planned placement. pieceRect = where the piece currently sits in the tray (null when already placed). */
+    data class Step(val piece: Piece, val pieceRect: RectF?, val trayIndex: Int, val r: Int, val c: Int, val points: Int)
+    data class PlanView(
+        val bx0: Float, val by0: Float, val pitch: Float,
+        val steps: List<Step>, val current: Int,          // index of the step to do now
+        val text: String, val sub: String?
     )
-    @Volatile private var hint: Hint? = null
+    @Volatile private var plan: PlanView? = null
     @Volatile private var message: String? = null
+    @Volatile private var flash: String? = null; private var flashUntil = 0L
     private var phase = 0f
-    private var yOffset = 0 // status-bar offset when the overlay isn't drawn from y=0
 
-    private val pFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.WHITE }
-    private val pGhostBlue = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.argb(85, 47, 155, 255) }   // blends to ~(15,80,135): not 'blue' for the parser
-    private val pGhostOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.argb(120, 255, 167, 38) }  // blends to ~(120,103,61): not 'orange' for the parser
-    private val pGhostEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = Color.rgb(60, 220, 120) }
-    private val pDim = Paint().apply { color = Color.argb(40, 0, 0, 0) }
+    // colors are chosen so the screen parser never mistakes overlay pixels for real cubes / bonus text
+    private val pGhostBlueDim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(45, 47, 155, 255) }
+    private val pGhostOrangeDim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(70, 255, 167, 38) }
+    private val pGhostBlue = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(90, 47, 155, 255) }
+    private val pGhostOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(125, 255, 167, 38) }
+    private val pEdgeDim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f; color = Color.argb(110, 200, 220, 240); pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f) }
+    private val pEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.rgb(60, 220, 120) }
+    private val pFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.rgb(60, 220, 120) }
     private val pArrow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 7f; color = Color.argb(235, 60, 220, 120); strokeCap = Paint.Cap.ROUND; pathEffect = DashPathEffect(floatArrayOf(22f, 14f), 0f) }
-    private val pArrowHead = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.rgb(60, 220, 120) }
-    private val pBadgeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-    private val pBadgeTxt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(10, 44, 87); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+    private val pArrowHead = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 220, 120) }
+    private val pBadge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 220, 120) }
+    private val pBadgeDim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 200, 210, 225) }
+    private val pBadgeTxt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(6, 30, 60); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private val pTxtBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(225, 4, 26, 51) }
     private val pTxt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private val pTxtSub = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 209, 102); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
-    private val pCellNum = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+    private val pFlashBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(230, 5, 150, 105) }
 
-    private val ticker = object : Runnable { override fun run() { phase += 0.12f; invalidate(); if (attached) main.postDelayed(this, 40) } }
+    private val ticker = object : Runnable { override fun run() { phase += 0.11f; invalidate(); if (attached) main.postDelayed(this, 40) } }
 
     fun show() { main.post { if (!attached) { runCatching { wm.addView(this, lp); attached = true; main.post(ticker) } } } }
     fun hide() { main.post { if (attached) { runCatching { wm.removeView(this) }; attached = false } } }
-    fun setHint(h: Hint?) { hint = h; if (h != null) message = null; postInvalidate() }
-    fun setMessage(m: String?) { message = m; postInvalidate() }
-    fun clear() { hint = null; message = null; postInvalidate() }
+    fun setPlan(p: PlanView?) { plan = p; if (p != null) message = null; postInvalidate() }
+    fun setMessage(m: String?) { message = m; if (m != null) plan = null; postInvalidate() }
+    fun flash(m: String, ms: Long = 1400) { flash = m; flashUntil = System.currentTimeMillis() + ms; postInvalidate() }
+    fun clear() { plan = null; message = null; postInvalidate() }
+
+    private fun ghostRect(pv: PlanView, s: Step): RectF {
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = 0f; var maxY = 0f
+        for (cell in s.piece.cells) {
+            val x = pv.bx0 + (s.c + cell.c) * pv.pitch; val y = pv.by0 + (s.r + cell.r) * pv.pitch
+            minX = minOf(minX, x); minY = minOf(minY, y); maxX = maxOf(maxX, x + pv.pitch); maxY = maxOf(maxY, y + pv.pitch)
+        }
+        return RectF(minX, minY, maxX, maxY)
+    }
 
     override fun onDraw(cv: Canvas) {
         val d = resources.displayMetrics.density
-        // The overlay window may not start at the very top (status bar). Map screen coords -> view coords.
-        val loc = IntArray(2); getLocationOnScreen(loc); yOffset = loc[1]
-        val h = hint
-        val msg = message
-        if (h == null) {
-            if (msg != null) drawBanner(cv, msg, null, d)
-            return
-        }
-        cv.save(); cv.translate(0f, -yOffset.toFloat())
+        val loc = IntArray(2); getLocationOnScreen(loc); val yOff = loc[1].toFloat()
+        val pv = plan; val msg = message
+        if (pv == null) { if (msg != null) drawBanner(cv, msg, null, d); drawFlash(cv, d); return }
+
+        cv.save(); cv.translate(0f, -yOff)
         val pulse = 0.5f + 0.5f * sin(phase.toDouble()).toFloat()
+        val pad = pv.pitch * 0.08f; val rad = pv.pitch * 0.15f
 
-        // 1) target ghost on the board
-        val pad = h.pitch * 0.08f
-        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = 0f; var maxY = 0f
-        for (cell in h.piece.cells) {
-            val x = h.bx0 + (h.c + cell.c) * h.pitch; val y = h.by0 + (h.r + cell.r) * h.pitch
-            val rf = RectF(x + pad, y + pad, x + h.pitch - pad, y + h.pitch - pad)
-            cv.drawRoundRect(rf, h.pitch * 0.15f, h.pitch * 0.15f, if (cell.v == 2) pGhostOrange else pGhostBlue)
-            minX = minOf(minX, rf.left); minY = minOf(minY, rf.top); maxX = maxOf(maxX, rf.right); maxY = maxOf(maxY, rf.bottom)
+        // ---- 1) all remaining steps as dim ghosts (plan overview), current one bright ----
+        for ((i, s) in pv.steps.withIndex()) {
+            if (i < pv.current) continue                       // already placed
+            val active = i == pv.current
+            for (cell in s.piece.cells) {
+                val x = pv.bx0 + (s.c + cell.c) * pv.pitch; val y = pv.by0 + (s.r + cell.r) * pv.pitch
+                val rf = RectF(x + pad, y + pad, x + pv.pitch - pad, y + pv.pitch - pad)
+                val paint = if (active) (if (cell.v == 2) pGhostOrange else pGhostBlue) else (if (cell.v == 2) pGhostOrangeDim else pGhostBlueDim)
+                cv.drawRoundRect(rf, rad, rad, paint)
+            }
+            val gr = ghostRect(pv, s); gr.inset(-3f, -3f)
+            if (active) { pEdge.alpha = (150 + 105 * pulse).toInt(); cv.drawRoundRect(gr, rad, rad, pEdge) }
+            else cv.drawRoundRect(gr, rad, rad, pEdgeDim)
+            // number badge at the ghost's top-right corner
+            val br = (if (active) 14f else 11f) * d
+            cv.drawCircle(gr.right, gr.top, br, if (active) pBadge else pBadgeDim)
+            pBadgeTxt.textSize = (if (active) 16f else 12f) * d
+            cv.drawText("${i + 1}", gr.right, gr.top + pBadgeTxt.textSize * 0.36f, pBadgeTxt)
         }
-        pGhostEdge.alpha = (140 + 115 * pulse).toInt()
-        val outline = RectF(minX - 4f, minY - 4f, maxX + 4f, maxY + 4f)
-        cv.drawRoundRect(outline, h.pitch * 0.2f, h.pitch * 0.2f, pGhostEdge)
 
-        // 2) frame around the tray piece
-        pFrame.alpha = (170 + 85 * pulse).toInt()
-        val pr = RectF(h.pieceRect); pr.inset(-12f * d, -12f * d)
-        cv.drawRoundRect(pr, 14f * d, 14f * d, pFrame)
-        // number badge
-        val br = 15f * d
-        cv.drawCircle(pr.left, pr.top, br, pBadgeBg)
-        pBadgeTxt.textSize = 17f * d
-        cv.drawText("${h.pieceIndex + 1}", pr.left, pr.top + 6f * d, pBadgeTxt)
-
-        // 3) arrow from piece to target
-        val sx = pr.centerX(); val sy = pr.top
-        val tx = outline.centerX(); val ty = outline.bottom
-        val ang = atan2((ty - sy).toDouble(), (tx - sx).toDouble()).toFloat()
-        val ex = tx - cos(ang) * 10f; val ey = ty - sin(ang) * 10f
-        val path = Path(); path.moveTo(sx, sy)
-        // slight curve
-        val mx = (sx + tx) / 2 + (if (tx > sx) -1 else 1) * 60f * d * 0.3f; val my = (sy + ty) / 2
-        path.quadTo(mx, my, ex, ey)
-        cv.drawPath(path, pArrow)
-        val hl = 16f * d
-        val head = Path(); head.moveTo(tx, ty)
-        head.lineTo(tx - hl * cos(ang - 0.45f), ty - hl * sin(ang - 0.45f)); head.lineTo(tx - hl * cos(ang + 0.45f), ty - hl * sin(ang + 0.45f)); head.close()
-        cv.drawPath(head, pArrowHead)
+        // ---- 2) tray: number badges on all remaining pieces; frame + arrow for the current one ----
+        for ((i, s) in pv.steps.withIndex()) {
+            if (i < pv.current) continue
+            val pr = s.pieceRect ?: continue
+            val active = i == pv.current
+            val fr = RectF(pr); fr.inset(-10f * d, -10f * d)
+            if (active) {
+                pFrame.alpha = (160 + 95 * pulse).toInt()
+                cv.drawRoundRect(fr, 12f * d, 12f * d, pFrame)
+                // arrow to the target ghost
+                val gr = ghostRect(pv, s)
+                val sx = fr.centerX(); val sy = fr.top; val tx = gr.centerX(); val ty = gr.bottom + 6f
+                val ang = atan2((ty - sy).toDouble(), (tx - sx).toDouble()).toFloat()
+                val path = Path(); path.moveTo(sx, sy)
+                path.quadTo((sx + tx) / 2 + (if (tx > sx) -1 else 1) * 18f * d, (sy + ty) / 2, tx - cos(ang) * 10f, ty - sin(ang) * 10f)
+                cv.drawPath(path, pArrow)
+                val hl = 16f * d; val head = Path(); head.moveTo(tx, ty)
+                head.lineTo(tx - hl * cos(ang - 0.45f), ty - hl * sin(ang - 0.45f)); head.lineTo(tx - hl * cos(ang + 0.45f), ty - hl * sin(ang + 0.45f)); head.close()
+                cv.drawPath(head, pArrowHead)
+            }
+            val br = (if (active) 14f else 11f) * d
+            cv.drawCircle(fr.left, fr.top, br, if (active) pBadge else pBadgeDim)
+            pBadgeTxt.textSize = (if (active) 16f else 12f) * d
+            cv.drawText("${i + 1}", fr.left, fr.top + pBadgeTxt.textSize * 0.36f, pBadgeTxt)
+        }
         cv.restore()
 
-        // 4) instruction banner (fixed under the status bar)
-        drawBanner(cv, h.text, "الخطوة ${h.step}/${h.total}   •   +${h.points} نقطة متوقعة", d)
+        drawBanner(cv, pv.text, pv.sub, d)
+        drawFlash(cv, d)
     }
 
     private fun drawBanner(cv: Canvas, main: String, sub: String?, d: Float) {
         val w = width.toFloat(); val top = 8f * d
         val hgt = if (sub != null) 62f * d else 44f * d
-        val rect = RectF(16f * d, top, w - 16f * d, top + hgt)
-        cv.drawRoundRect(rect, 16f * d, 16f * d, pTxtBg)
-        pTxt.textSize = 17f * d
-        cv.drawText(main, w / 2, top + 27f * d, pTxt)
+        cv.drawRoundRect(RectF(16f * d, top, w - 16f * d, top + hgt), 16f * d, 16f * d, pTxtBg)
+        pTxt.textSize = 17f * d; cv.drawText(main, w / 2, top + 27f * d, pTxt)
         if (sub != null) { pTxtSub.textSize = 13f * d; cv.drawText(sub, w / 2, top + 50f * d, pTxtSub) }
+    }
+    private fun drawFlash(cv: Canvas, d: Float) {
+        val f = flash ?: return
+        if (System.currentTimeMillis() > flashUntil) { flash = null; return }
+        val w = width.toFloat(); val cy = height * 0.42f
+        pTxt.textSize = 20f * d
+        val tw = pTxt.measureText(f) + 40f * d
+        cv.drawRoundRect(RectF(w / 2 - tw / 2, cy - 26f * d, w / 2 + tw / 2, cy + 26f * d), 18f * d, 18f * d, pFlashBg)
+        cv.drawText(f, w / 2, cy + 7f * d, pTxt)
     }
 }

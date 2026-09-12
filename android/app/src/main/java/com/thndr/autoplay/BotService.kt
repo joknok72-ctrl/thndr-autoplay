@@ -49,6 +49,8 @@ class BotService : Service() {
     private var guide: GuideOverlay? = null
     private var W = 0; private var H = 0
     private var stopFlag = false
+    @Volatile private var manualNext = false
+    @Volatile private var forceReplan = false
     private val prefs by lazy { getSharedPreferences("bot", Context.MODE_PRIVATE) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -60,7 +62,7 @@ class BotService : Service() {
                 val code = intent.getIntExtra(EXTRA_CODE, 0)
                 val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
                 if (data != null) setupProjection(code, data)
-                overlay = OverlayController(this) { toggle() }.also { it.show() }
+                overlay = OverlayController(this, { toggle() }, { manualNext = true }, { forceReplan = true }).also { it.show() }
                 guide = GuideOverlay(this).also { it.show() }
                 report("جاهز — اضغط ▶ فوق اللعبة")
             }
@@ -127,77 +129,127 @@ class BotService : Service() {
     private var idleCount = 0
     private fun loop() { if (isAuto()) autoLoop() else guideLoop() }
 
-    /** Guide mode: read screen → plan 3 pieces → show ONE hint at a time → detect the drop → next hint. */
+    /**
+     * Guide mode. Plan is LOCKED for the whole round (3 pieces). The current step is bright; the others are dim.
+     * Advance when: (a) the piece really landed on its target (verified from the screen), or
+     * (b) the user taps "التالي" on the floating button. If a piece landed elsewhere → re-plan with the rest.
+     */
     private fun guideLoop() {
-        var plannedSig = ""
-        var queue: MutableList<Pair<com.thndr.autoplay.engine.Move, com.thndr.autoplay.vision.TrayPiece>> = mutableListOf()
-        var step = 0; var total = 0
-        var expectBoard: IntArray? = null
-        var lastPieceCount = -1
+        var steps: MutableList<GuideOverlay.Step> = mutableListOf()
+        var cur = 0
+        var roundSig = ""              // signature of the tray at planning time
+        var baseBoard: IntArray? = null // board when the current step was shown
+        var lastTrayCount = -1
+        var stableSince = 0L
+        overlay?.setNextVisible(true)
         while (!stopFlag) {
             try {
                 val bmp = capture() ?: run { Thread.sleep(150); null } ?: continue
                 val scr = try { ScreenParser.parse(bmp) } catch (e: ScreenParser.ParseException) {
-                    guide?.setHint(null); guide?.setMessage("مش شايف اللوحة — افتح اللعبة"); report("مش شايف اللوحة (${e.message})"); Thread.sleep(600); continue
+                    guide?.setMessage("مش شايف اللوحة — افتح اللعبة"); report("مش شايف اللوحة (${e.message})"); Thread.sleep(600); continue
                 }
                 lastBoard = scr.boardString()
                 val found = scr.piecesFound
                 if (found == 0) {
-                    queue.clear(); plannedSig = ""
+                    steps.clear(); cur = 0; roundSig = ""
                     idleCount++
-                    guide?.setHint(null); guide?.setMessage(if (idleCount > 5) "مافيش قطع — انتهت الجولة أو اللعبة" else "بانتظار القطع الجديدة…")
+                    guide?.setMessage(if (idleCount > 5) "مافيش قطع — انتهت الجولة أو اللعبة" else "بانتظار القطع الجديدة…")
                     report("بانتظار القطع…"); Thread.sleep(500); continue
                 }
                 idleCount = 0
 
-                // A piece was consumed (tray count dropped) → advance to next hint
-                if (queue.isNotEmpty() && found < lastPieceCount) {
-                    queue.removeAt(0); step++
-                    movesDone++
-                    if (queue.isEmpty()) { plannedSig = "" }
-                }
-                lastPieceCount = found
-
-                // Need a (re)plan: new set of pieces, or board diverged from expectation
-                val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
-                val needPlan = queue.isEmpty() || (expectBoard != null && !boardsCompatible(expectBoard!!, scr.board))
-                if (needPlan) {
-                    if (sig == plannedSig) { Thread.sleep(250); continue }
-                    guide?.setHint(null); guide?.setMessage("بفكر في أفضل خطة…")
-                    report("بفكر… ($found قطع)")
+                // ---------- (re)plan when a NEW round appears (all 3 pieces fresh) or on demand ----------
+                val traySig = scr.tray.joinToString("|") { it?.piece?.toString() ?: "-" }
+                val newRound = steps.isEmpty() || (found == 3 && traySig != roundSig && found > lastTrayCount)
+                if (newRound || forceReplan) {
+                    forceReplan = false
+                    guide?.setMessage("بفكر في أفضل خطة للجولة…"); report("بفكر… ($found قطع)")
                     val pieces = scr.tray.map { it?.piece }
                     val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
-                    plannedSig = sig
                     if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(1200); continue }
-                    queue = plan.moves.map { it to scr.tray[it.slot]!! }.toMutableList()
-                    step = 1; total = queue.size
+                    steps = plan.moves.map { m -> val tp = scr.tray[m.slot]!!; GuideOverlay.Step(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), m.slot, m.r, m.c, m.points) }.toMutableList()
+                    cur = 0; roundSig = traySig; baseBoard = scr.board.copyOf(); stableSince = 0
+                    guide?.flash(if (newRound) "خطة جديدة: ${steps.size} قطع" else "تم تعديل الخطة")
+                    vibrate(longArrayOf(0, 30, 40, 30))
+                }
+                lastTrayCount = found
+
+                // ---------- verify the current step ----------
+                if (cur < steps.size) {
+                    val st = steps[cur]
+                    val base = baseBoard ?: scr.board
+                    val landed = landedAt(base, scr.board, st.piece, st.r, st.c)
+                    val stillInTray = matchTrayPiece(scr, st.piece) != null
+                    val consumed = !stillInTray || found < steps.size - cur   // piece left the tray
+                    if (landed || manualNext) {
+                        manualNext = false
+                        cur++; movesDone++
+                        vibrate(longArrayOf(0, 40))
+                        guide?.flash(if (cur < steps.size) "✅ تمام — القطعة ${cur + 1}" else "✅ الجولة خلصت")
+                        baseBoard = scr.board.copyOf(); stableSince = 0
+                        if (cur >= steps.size) { steps.clear(); roundSig = traySig }
+                        Thread.sleep(350); continue
+                    }
+                    if (consumed) {
+                        // piece is gone but not where planned → wait for animations to settle, then re-plan with the rest
+                        if (stableSince == 0L) stableSince = System.currentTimeMillis()
+                        if (System.currentTimeMillis() - stableSince > 700) {
+                            report("القطعة نزلت في مكان مختلف — بعيد التخطيط")
+                            forceReplan = true; stableSince = 0
+                        }
+                        Thread.sleep(150); continue
+                    } else stableSince = 0
                 }
 
-                // Show current hint, matched to the CURRENT tray (slots shift when a piece is consumed)
-                val (mv, tpPlanned) = queue[0]
-                val tp = matchTrayPiece(scr, tpPlanned) ?: run { queue.clear(); plannedSig = ""; null } ?: continue
-                val trayIdx = scr.tray.indexOf(tp)
-                val where = describe(mv.r, mv.c, tp.piece)
-                val pieceName = when (trayIdx) { 0 -> "اليسرى"; 1 -> "الوسطى"; else -> "اليمنى" }
-                val text = "اسحب القطعة $pieceName (" + (trayIdx + 1) + ") → " + where
-                guide?.setHint(GuideOverlay.Hint(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), trayIdx,
-                    scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, mv.r, mv.c, text, step, total, mv.points))
-                report("الخطوة $step/$total: قطعة ${trayIdx + 1} → صف ${mv.r + 1} عمود ${mv.c + 1}")
-                // expected board after this drop (for divergence detection): placed cells become non-empty unless cleared
-                expectBoard = Engine.place(scr.board, scr.bonus, tp.piece, mv.r, mv.c).board
-                Thread.sleep(220)
+                // ---------- draw plan (current step bright, others dim) ----------
+                if (cur < steps.size) {
+                    // refresh tray rects for remaining pieces (tray may shift after a piece is consumed)
+                    val shown = steps.mapIndexed { i, st -> if (i < cur) st else { val tp = matchTrayPiece(scr, st.piece); st.copy(pieceRect = tp?.let { RectF(it.x0.toFloat(), it.y0.toFloat(), it.x1.toFloat(), it.y1.toFloat()) }, trayIndex = tp?.let { scr.tray.indexOf(it) } ?: st.trayIndex) } }
+                    val st = shown[cur]
+                    val name = when (st.trayIndex) { 0 -> "اليسرى"; 1 -> "الوسطى"; else -> "اليمنى" }
+                    val text = "القطعة ${cur + 1} ($name) → " + describe(st.r, st.c, st.piece)
+                    val sub = "الخطوة ${cur + 1}/${steps.size}  •  +${st.points} نقطة  •  اسحبها للشبح الأخضر"
+                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, shown, cur, text, sub))
+                    report("الخطوة ${cur + 1}/${steps.size}: قطعة ${st.trayIndex + 1} → صف ${st.r + 1} عمود ${st.c + 1}")
+                }
+                Thread.sleep(200)
             } catch (e: Throwable) {
                 Log.e(TAG, "guide error", e); report("خطأ: ${e.message}"); Thread.sleep(600)
             }
         }
+        overlay?.setNextVisible(false)
         guide?.clear()
     }
 
+    /** True when every target cell of the piece became filled (or the line/box containing it got cleared) compared with the base board. */
+    private fun landedAt(base: IntArray, cur: IntArray, p: com.thndr.autoplay.engine.Piece, r: Int, c: Int): Boolean {
+        val expect = Engine.place(base, IntArray(N * N), p, r, c)
+        // if the placement causes clears, cells may be empty now: compare against the expected post-clear board instead
+        var match = 0; var total = 0
+        for (cell in p.cells) {
+            val i = (r + cell.r) * N + (c + cell.c); total++
+            val want = expect.board[i] != 0
+            if ((cur[i] != 0) == want) match++
+        }
+        if (match < total) return false
+        // also make sure the rest of the board didn't get NEW cubes elsewhere (piece placed somewhere else)
+        var extra = 0
+        for (i in 0 until N * N) if (cur[i] != 0 && expect.board[i] == 0) extra++
+        return extra <= 1
+    }
+
+    private fun vibrate(pattern: LongArray) {
+        try {
+            val v = if (Build.VERSION.SDK_INT >= 31) (getSystemService(VibratorManager::class.java)).defaultVibrator else @Suppress("DEPRECATION") getSystemService(Vibrator::class.java)
+            v.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        } catch (_: Throwable) {}
+    }
+
     /** Same shape (and colors) as planned, in the current tray. */
-    private fun matchTrayPiece(scr: Screen, planned: com.thndr.autoplay.vision.TrayPiece): com.thndr.autoplay.vision.TrayPiece? {
-        val key = planned.piece.toString()
+    private fun matchTrayPiece(scr: Screen, planned: com.thndr.autoplay.engine.Piece): com.thndr.autoplay.vision.TrayPiece? {
+        val key = planned.toString()
         return scr.tray.firstOrNull { it != null && it.piece.toString() == key }
-            ?: scr.tray.firstOrNull { it != null && it.piece.cells.map { c -> c.r to c.c } == planned.piece.cells.map { c -> c.r to c.c } }
+            ?: scr.tray.firstOrNull { it != null && it.piece.cells.map { c -> c.r to c.c } == planned.cells.map { c -> c.r to c.c } }
     }
 
     /** Boards are compatible if current has no filled cell where expected is empty (clears may remove cells). */
@@ -244,8 +296,8 @@ class BotService : Service() {
 
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!
                 // show the same hint while dragging so the user sees what the bot intends
-                guide?.setHint(GuideOverlay.Hint(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), mv.slot,
-                    scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, mv.r, mv.c, "البوت يسحب القطعة ${mv.slot + 1}", 1, 1, mv.points))
+                guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch,
+                    listOf(GuideOverlay.Step(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), mv.slot, mv.r, mv.c, mv.points)), 0, "البوت يسحب القطعة ${mv.slot + 1}", null))
                 val ok = performMove(scr, tp, mv.r, mv.c)
                 if (!ok) { report("الإيماءة فشلت"); Thread.sleep(500); continue }
                 movesDone++
