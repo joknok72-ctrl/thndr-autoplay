@@ -1,21 +1,62 @@
-```txt
-npm install
-npm run dev
-```
+# THNDR AI Block
 
-```txt
-npm run deploy
-```
+## Project Overview
+- **Name**: THNDR AI Block
+- **Goal**: نسخة موبايل من لعبة THNDR Block (لوحة 9×9) يلعبها **ذكاء اصطناعي** بدلاً من اللاعب. المستخدم يُدخل القطع الثلاث فقط (ويحدد اختيارياً الخانات المرقمة والمكعبات الصفراء) والكمبيوتر يختار أقوى الحركات.
+- **Features**:
+  - واجهة مطابقة للصور المرجعية (Top bar، 5 أزرار دائرية، Streak/Score، لوحة 9×9 بمركز أغمق، Multiplier/Level، لوجو THNDR، صينية 3 قطع).
+  - **محرر قطع** 5×5 (أزرق/أصفر/مسح، تدوير، عكس) + مكتبة 47 شكلاً (مستقيم، مربع، L، J، T، S/Z، Plus، U، درج/قطري…).
+  - **محرر خانات اللوحة**: خانة مرقمة (50/150/300/500/1K/2K) بحد أقصى 3 خانات — تبقى فاضية وقانوني وضع قطعة فوقها — أو مكعب أزرق/أصفر/تفريغ.
+  - قيمة المكعب الأصفر (كم يزيد المضاعف X) قابلة للتحديد لكل قطعة.
+  - **ذكاء اصطناعي**: يجرب كل 6 ترتيبات للقطع الثلاث + Beam Search + تقييم (الثقوب، التشتت، الصفوف القريبة من الامتلاء، مساحات 3×3، قابلية وضع 9–12 قطعة اختبارية مستقبلاً، الخانات المرقمة، نمو المضاعف). يعمل داخل Web Worker حتى لا يتجمد الهاتف. 3 مستويات قوة.
+  - نتيجة المحاكاة الذاتية (قطع عشوائية، 25 لفل): مستوى "قوي" و"أقصى" نجوا 10/10 ألعاب بمتوسط ~10.5K نقطة.
+  - 25 لفل (كل لفل = 3 قطع) ثم شاشة فوز؛ خسارة عند عدم وجود مكان لأي قطعة. تراجع (Undo) حتى 40 خطوة.
+  - نقاط عائمة، أنيميشن مسح، انتقال لفل (تعتيم + كرات) مثل الصورة المرجعية، صوت WebAudio، اهتزاز.
+  - 4 ثيمات ألوان (زر اللوحة)، إعدادات (قوة الذكاء، السرعة، طريقة حساب المكافأة، نمو الأرقام 50→150→300…، تنفيذ تلقائي، صوت، اهتزاز).
+  - PWA قابل للتثبيت على الهاتف + حفظ تلقائي للحالة والإحصائيات في localStorage.
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+## URLs
+- **Production**: https://thndr-ai-block.pages.dev
+- **Latest deploy**: https://71f190e1.thndr-ai-block.pages.dev
+- **Health**: `GET /api/health`
 
-```txt
-npm run cf-typegen
-```
+## Functional Entry Points
+| المسار | الوصف |
+|---|---|
+| `/` | اللعبة (واجهة كاملة) |
+| `/static/engine.js` | محرك اللعبة (قواعد، وضع، مسح، نقاط) |
+| `/static/ai.js` | مخطِّط الذكاء الاصطناعي |
+| `/static/ai-worker.js` | Web Worker للتخطيط |
+| `/static/app.js` | واجهة/تحكم |
+| `/manifest.json`, `/sw.js` | PWA |
+| `/api/health` | فحص الحالة |
 
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
+## User Guide
+1. اضغط أي خانة من الثلاث تحت → ارسم القطعة (أو اخترها من المكتبة) → حفظ. كرر للثلاث قطع. (زر 🎲 يولّد 3 قطع عشوائية للتجربة.)
+2. اختيارياً: اضغط خانة فاضية في اللوحة لوضع رقم مكافأة (حد أقصى 3) أو مكعب أزرق/أصفر لمطابقة لوحتك الحقيقية.
+3. اضغط **خطة الذكاء** → تظهر أماكن القطع بأرقام 1،2،3 → اضغط **تنفيذ**.
+4. بعد كل 3 قطع ينتقل اللفل. اللفل 25 = الأخير ثم الفوز 🏆.
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
-```
+## Scoring Model
+- +1 لكل مكعب موضوع.
+- مسح صف/عمود: `20 × (عدد الخطوط)² × المضاعف × (1 + 0.5 × (Streak − 1))`.
+- الخانة المرقمة: تُضاف `الرقم × المضاعف` عند مسح صفها/عمودها (أو عند التغطية حسب الإعداد).
+- المكعب الأصفر: عند مسحه يزيد المضاعف بقيمته (+1 افتراضياً).
+
+## Data Architecture
+- **Storage**: localStorage فقط (`thndr-game`, `thndr-settings`, `thndr-stats`) — اللعبة تعمل بالكامل على الجهاز، بدون قاعدة بيانات.
+- **Models**: `board: Uint8Array(81)` (0 فاضي، 1 أزرق، 2 أصفر)، `bonus: number[81]`، `piece: {cells:[{r,c,v}], yv, h, w}`.
+
+## Deployment
+- **Platform**: Cloudflare Pages (حساب المستخدم — BYOK)
+- **Project**: `thndr-ai-block`
+- **Status**: ✅ Active
+- **Tech Stack**: Hono + Vite + Vanilla JS + CSS (بدون إطار عمل أمامي)
+- **Local dev**: `npm run build && pm2 start ecosystem.config.cjs`
+- **Redeploy**: `npm run build && npx wrangler pages deploy dist --project-name thndr-ai-block`
+- **Last Updated**: 2026-09-12
+
+## Not Yet Implemented / Next Steps
+- إدخال اللوحة بالكامل من صورة (OCR) بدل الإدخال اليدوي.
+- بحث أعمق (Look-ahead لجولة قادمة محتملة) في وضع "أقصى".
+- مزامنة سحابية للإحصائيات (D1) إن طُلب.
