@@ -161,29 +161,34 @@ object ScreenParser {
         val slots = listOf(ArrayList<Comp>(), ArrayList<Comp>(), ArrayList<Comp>())
         for (cp in good) slots[minOf(2, (((cp.x0 + cp.x1) / 2f) / (W / 3f)).toInt())].add(cp)
         val cubePx = pitch * 0.455f          // tray cube ≈ 45.5% of a board cell (constant in THNDR)
-        val mp = cubePx * 1.12f              // cube + gap
-        val kk = (cubePx * 0.3f).toInt().coerceAtLeast(2)
+        val kk = (cubePx * 0.28f).toInt().coerceAtLeast(2)
+        // projection-profile grid detection: each run of "on" columns/rows = one cube column/row
+        fun runs(prof: IntArray, thr: Float): MutableList<IntArray> { val out = ArrayList<IntArray>(); var st = -1; for (i in prof.indices) { val on = prof[i] > thr; if (on && st < 0) st = i; if (!on && st >= 0) { out.add(intArrayOf(st, i - 1)); st = -1 } }; if (st >= 0) out.add(intArrayOf(st, prof.size - 1)); return out }
+        fun merge(rs: List<IntArray>): List<IntArray> { val m = ArrayList<IntArray>(); for (r in rs) { if (m.isNotEmpty() && r[0] - m.last()[1] <= cubePx * 0.35f) m[m.size - 1] = intArrayOf(m.last()[0], r[1]) else m.add(r) }; return m.filter { it[1] - it[0] + 1 >= cubePx * 0.55f } }
+        fun split(rs: List<IntArray>): List<IntArray> { val o = ArrayList<IntArray>(); for (r in rs) { val w = r[1] - r[0] + 1; val k = maxOf(1, (w / (cubePx * 1.12f)).roundToInt()); if (k == 1) o.add(r) else { val step = w / k.toFloat(); for (i in 0 until k) o.add(intArrayOf((r[0] + i * step).toInt(), (r[0] + (i + 1) * step).toInt() - 1)) } }; return o }
         val tray = ArrayList<TrayPiece?>()
         for (sl in slots) {
             if (sl.isEmpty()) { tray.add(null); continue }
             val minx = sl.minOf { it.x0 }; val miny = sl.minOf { it.y0 }; val maxx = sl.maxOf { it.x1 }; val maxy = sl.maxOf { it.y1 }
-            val nc = maxOf(1, ((maxx - minx + 1 + (mp - cubePx)) / mp).roundToInt())
-            val nr = maxOf(1, ((maxy - miny + 1 + (mp - cubePx)) / mp).roundToInt())
-            val pw = if (nc > 1) (maxx - minx + 1 - cubePx) / (nc - 1) else mp
-            val ph = if (nr > 1) (maxy - miny + 1 - cubePx) / (nr - 1) else mp
+            val sw = maxx - minx + 1; val sh = maxy - miny + 1
+            val colP = IntArray(sw); val rowP = IntArray(sh)
+            for (y in 0 until sh) for (x in 0 until sw) if (m[(miny + y) * W + (minx + x)]) { colP[x]++; rowP[y]++ }
+            val cr = split(merge(runs(colP, cubePx * 0.25f))); val rr = split(merge(runs(rowP, cubePx * 0.25f)))
+            if (cr.isEmpty() || rr.isEmpty()) { tray.add(null); continue }
             val cells = ArrayList<Cell>()
-            for (rr in 0 until nr) for (cc in 0 until nc) {
-                val cx = (minx + cubePx / 2 + cc * pw).toInt(); val cy = (miny + cubePx / 2 + rr * ph).toInt()
+            for ((ri, rrun) in rr.withIndex()) for ((ci, crun) in cr.withIndex()) {
+                val cy = (rrun[0] + rrun[1]) / 2; val cx = (crun[0] + crun[1]) / 2
                 var tot = 0; var on = 0; var nH = 0; var nS = 0
                 for (y in cy - kk..cy + kk) for (x in cx - kk..cx + kk) {
-                    if (y !in 0 until th || x !in 0 until W) continue
-                    tot++; if (m[y * W + x]) { on++; val p = px[(y + ty0) * W + x]; if (sat(p) >= 90) { nH++; if (isSpecial(hue(p))) nS++ } }
+                    if (y !in 0 until sh || x !in 0 until sw) continue
+                    tot++
+                    val gi = (miny + y) * W + (minx + x)
+                    if (m[gi]) { on++; val p = px[(miny + y + ty0) * W + (minx + x)]; if (sat(p) >= 90) { nH++; if (isSpecial(hue(p))) nS++ } }
                 }
-                if (tot > 0 && on > 0.45f * tot) cells.add(Cell(rr, cc, if (nH > 0 && nS > nH / 2) 2 else 1))
+                if (tot > 0 && on > 0.5f * tot) cells.add(Cell(ri, ci, if (nH > 0 && nS > nH / 2) 2 else 1))
             }
             if (cells.isEmpty()) { tray.add(null); continue }
-            val piece = Piece(cells)
-            tray.add(TrayPiece(piece, (minx + maxx) / 2f, (miny + maxy) / 2f + ty0, cubePx, minx, miny + ty0, maxx, maxy + ty0))
+            tray.add(TrayPiece(Piece(cells), (minx + maxx) / 2f, (miny + maxy) / 2f + ty0, cubePx, minx, miny + ty0, maxx, maxy + ty0))
         }
         return Screen(board, bonus, bx0, by0, bx1, by1, pitch, tray, W, H)
     }
