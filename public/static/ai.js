@@ -15,7 +15,9 @@
   const PROBES = ['sq3','i5','v5','sq2','Lbig1','T4a','i4','v4','l3a','i3','v3','plus'].map(k => E.makePiece(k));
   const PROBE_W = { sq3: 3.5, i5: 2, v5: 2, sq2: 1.5, Lbig1: 1.5, T4a: 1, i4: 1, v4: 1, l3a: .6, i3: .6, v3: .6, plus: 1 };
 
-  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
+  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 9 } };
+  // weights tuned by self-play simulation (25-level survival + score)
+  const W = { empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15, pts: .5, mult: 45 };
 
   function evaluateBoard(board, bonus, cfg) {
     let empty = 0, holes = 0, trans = 0, nearFull = 0, edgeTouch = 0, islands = 0;
@@ -44,9 +46,12 @@
       if (colFill[k] >= 7) nearFull += (colFill[k]-6);
     }
     // placeability of probe pieces (survival + flexibility)
-    let fit = 0;
+    let fit = 0, dead = 0;
     const probes = PROBES.slice(0, cfg.probes);
-    for (const p of probes) { const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) fit -= (PROBE_W[p.key]||1) * 2; }
+    for (const p of probes) { const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
+    // open 3x3 windows = room for the biggest pieces
+    let sq3 = 0;
+    for (let r=0;r<=6;r++) for (let c=0;c<=6;c++) { let ok=true; for (let a=0;a<3&&ok;a++) for (let b=0;b<3;b++) if (board[idx(r+a,c+b)]) { ok=false; break; } if (ok) sq3++; }
     // small islands of filled blocks (isolated blobs are hard to clear)
     const seen = new Uint8Array(N*N);
     for (let i=0;i<N*N;i++) if (board[i] && !seen[i]) { let size=0; const st=[i]; seen[i]=1; while(st.length){ const j=st.pop(); size++; const r=(j/N)|0, c=j%N; const nb=[]; if(r>0)nb.push(j-N); if(r<N-1)nb.push(j+N); if(c>0)nb.push(j-1); if(c<N-1)nb.push(j+1); for(const k of nb) if(board[k]&&!seen[k]){seen[k]=1;st.push(k);} } if (size<=2) islands++; }
@@ -55,7 +60,7 @@
     let bonusPot = 0;
     for (let i=0;i<N*N;i++) if (bonus[i]) { const r=(i/N)|0, c=i%N; bonusPot += bonus[i] * (Math.max(rowFill[r], colFill[c]) / N) * 0.02; }
 
-    return empty * 1.0 - holes * 4.0 - trans * 0.9 + nearFull * 1.6 + edgeTouch * 0.25 + fit * 6 - islands * 2.5 + bonusPot;
+    return empty * W.empty - holes * W.holes - trans * W.trans + nearFull * W.near + edgeTouch * W.edge + fit * W.fit - islands * W.isl + bonusPot + sq3 * W.sq3 - dead * W.dead;
   }
 
   function permutations(arr) {
@@ -73,7 +78,7 @@
     if (!slots.length) return { moves: [], total: 0, gameOver: false };
     const orders = permutations(slots);
     let best = null;
-    const W_PTS = 1.0, W_MULT = 45;
+    const W_PTS = W.pts, W_MULT = W.mult;
 
     for (const order of orders) {
       // beam: each node = { board, bonus, streak, mult, pts, moves[] }
