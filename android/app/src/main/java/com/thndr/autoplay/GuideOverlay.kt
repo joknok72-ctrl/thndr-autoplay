@@ -58,6 +58,8 @@ class GuideOverlay(ctx: Context) : View(ctx) {
     private val pTxt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private val pTxtSub = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 209, 102); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private val pFlashBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(230, 5, 150, 105) }
+    private val pMiniBlue = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(47, 155, 255) }
+    private val pMiniOrange = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 167, 38) }
 
     private val ticker = object : Runnable { override fun run() { phase += 0.11f; invalidate(); if (attached) main.postDelayed(this, 40) } }
 
@@ -107,6 +109,20 @@ class GuideOverlay(ctx: Context) : View(ctx) {
             cv.drawText("${i + 1}", gr.right, gr.top + pBadgeTxt.textSize * 0.36f, pBadgeTxt)
         }
 
+        // ---- 1b) mini "as read" drawing of each remaining piece, just above its tray slot ----
+        for ((i, s) in pv.steps.withIndex()) {
+            if (i < pv.current) continue
+            val pr = s.pieceRect ?: continue
+            val ms = 7f * d; val gap = 1.5f * d
+            val pw = s.piece.w * (ms + gap); val ph = s.piece.h * (ms + gap)
+            val left = pr.centerX() - pw / 2; val top = pr.top - ph - 22f * d
+            cv.drawRoundRect(RectF(left - 4f * d, top - 4f * d, left + pw + 4f * d, top + ph + 4f * d), 5f * d, 5f * d, pTxtBg)
+            for (cell in s.piece.cells) {
+                val x = left + cell.c * (ms + gap); val y = top + cell.r * (ms + gap)
+                cv.drawRoundRect(RectF(x, y, x + ms, y + ms), 2f * d, 2f * d, if (cell.v == 2) pMiniOrange else pMiniBlue)
+            }
+        }
+
         // ---- 2) tray: number badges on all remaining pieces; frame + arrow for the current one ----
         for ((i, s) in pv.steps.withIndex()) {
             if (i < pv.current) continue
@@ -140,10 +156,12 @@ class GuideOverlay(ctx: Context) : View(ctx) {
 
     private fun drawBanner(cv: Canvas, main: String, sub: String?, d: Float) {
         val w = width.toFloat(); val top = 8f * d
-        val hgt = if (sub != null) 62f * d else 44f * d
-        cv.drawRoundRect(RectF(16f * d, top, w - 16f * d, top + hgt), 16f * d, 16f * d, pTxtBg)
-        pTxt.textSize = 17f * d; cv.drawText(main, w / 2, top + 27f * d, pTxt)
-        if (sub != null) { pTxtSub.textSize = 13f * d; cv.drawText(sub, w / 2, top + 50f * d, pTxtSub) }
+        val text = if (sub != null) "$main   $sub" else main
+        pTxt.textSize = 16f * d
+        val tw = pTxt.measureText(text) + 32f * d
+        val hgt = 38f * d
+        cv.drawRoundRect(RectF(w / 2 - tw / 2, top, w / 2 + tw / 2, top + hgt), 19f * d, 19f * d, pTxtBg)
+        cv.drawText(text, w / 2, top + 25f * d, pTxt)
     }
     private fun drawFlash(cv: Canvas, d: Float) {
         val f = flash ?: return

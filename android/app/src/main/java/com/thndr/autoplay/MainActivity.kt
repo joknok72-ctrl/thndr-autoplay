@@ -44,6 +44,10 @@ class MainActivity : AppCompatActivity() {
         rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", if (id == R.id.modeAuto) 1 else 0).apply(); refreshMode() }
         refreshMode()
 
+        val chk = findViewById<android.widget.CheckBox>(R.id.chkConfirm)
+        chk.isChecked = prefs.getBoolean("confirmPieces", false)
+        chk.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("confirmPieces", v).apply() }
+
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3) - 1
         lblLevel.text = levelName(seekLevel.progress + 1)

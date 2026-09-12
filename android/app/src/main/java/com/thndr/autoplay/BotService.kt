@@ -163,9 +163,12 @@ class BotService : Service() {
                     if (scr.piecesFound == 0) { guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }
                     // Show what we READ and let the user confirm/fix the shapes ("he draws the cubes himself")
                     pendingScreen = scr
-                    guide?.setMessage("راجع القطع الثلاث وعدّلها لو فيه غلط، ثم ✓")
-                    report("راجع القطع ثم ✓")
-                    editor?.show(scr.tray.map { it?.piece })
+                    if (prefs.getBoolean("confirmPieces", false)) {
+                        guide?.setMessage("راجع القطع الثلاث وعدّلها لو فيه غلط، ثم ✓"); report("راجع القطع ثم ✓")
+                        editor?.show(scr.tray.map { it?.piece })
+                    } else {
+                        confirmedPieces = scr.tray.map { it?.piece }   // trust the reading, go straight to the plan
+                    }
                 }
                 val confirmed = confirmedPieces
                 val ps = pendingScreen
@@ -198,8 +201,8 @@ class BotService : Service() {
                 if (steps.isNotEmpty() && fz != null && cur < steps.size) {
                     val st = steps[cur]
                     val name = when (st.trayIndex) { 0 -> "اليسرى"; 1 -> "الوسطى"; else -> "اليمنى" }
-                    val text = "القطعة ${cur + 1} ($name) → " + describe(st.r, st.c, st.piece)
-                    val sub = "الخطوة ${cur + 1}/${steps.size}  •  +${st.points} نقطة  •  «التالي» بعد ما تحطها"
+                    val text = "${cur + 1}  ←  $name"
+                    val sub = "+${st.points}"
                     guide?.setPlan(GuideOverlay.PlanView(fz.bx0.toFloat(), fz.by0.toFloat(), fz.pitch, steps, cur, text, sub))
                     report("الخطوة ${cur + 1}/${steps.size}: قطعة ${st.trayIndex + 1} → صف ${st.r + 1} عمود ${st.c + 1}")
                 }
