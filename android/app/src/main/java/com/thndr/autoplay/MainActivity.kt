@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         chk.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("confirmPieces", v).apply() }
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
-        seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3) - 1
+        seekLevel.max = 3; seekLevel.progress = prefs.getInt("level", 4) - 1
         lblLevel.text = levelName(seekLevel.progress + 1)
         seekLevel.setOnSeekBarChangeListener(simple { prefs.edit().putInt("level", it + 1).apply(); lblLevel.text = levelName(it + 1) })
 
@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         tick()
     }
 
-    private fun levelName(l: Int) = when (l) { 1 -> "سريع"; 2 -> "قوي"; else -> "أقصى (موصى به)" }
+    private fun levelName(l: Int) = when (l) { 1 -> "سريع"; 2 -> "قوي"; 3 -> "أقصى"; else -> "خارق — بحث أعمق + توقع الجولة القادمة (موصى به)" }
     private fun simple(f: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) { f(p) }
         override fun onStartTrackingTouch(s: SeekBar?) {}; override fun onStopTrackingTouch(s: SeekBar?) {}

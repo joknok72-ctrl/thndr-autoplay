@@ -176,7 +176,7 @@ class BotService : Service() {
                     confirmedPieces = null; pendingScreen = null
                     // tray rect per slot: use the read rect if present, else a default slot box under the board
                     val slotW = ps.width / 3f
-                    val plan = AI.plan(ps.board, ps.bonus, confirmed, 0, 1, prefs.getInt("level", 3))
+                    val plan = AI.plan(ps.board, ps.bonus, confirmed, 0, 1, prefs.getInt("level", 4))
                     if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
                     steps = plan.moves.map { m ->
                         val piece = confirmed[m.slot]!!
@@ -285,7 +285,7 @@ class BotService : Service() {
 
                 val pieces = scr.tray.map { it?.piece }
                 report("بفكر… (${scr.piecesFound} قطع)")
-                val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
+                val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 4))
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!

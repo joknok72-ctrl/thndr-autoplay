@@ -28,7 +28,15 @@ object AI {
     private const val W_DEAD = 15.0; private const val W_PTS = 0.5; private const val W_MULT = 45.0
 
     data class Cfg(val beam: Int, val probes: Int)
-    val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 9))
+    val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 9), 4 to Cfg(48, 12))
+    // Level 4 ("خارق"): after beam search, re-rank the top candidates by a 1-round LOOKAHEAD against
+    // hard future rounds (big/awkward pieces). Chooses the plan that stays alive AND scores next round too.
+    private val HARD_ROUNDS: List<List<Piece>> = listOf(
+        listOf(Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 0, 1 to 1, 1 to 2, 2 to 0, 2 to 1, 2 to 2), Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3, 0 to 4), Engine.shape(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0)),
+        listOf(Engine.shape(0 to 0, 1 to 0, 2 to 0, 2 to 1, 2 to 2), Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 0, 1 to 1, 1 to 2, 2 to 0, 2 to 1, 2 to 2), Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3)),
+        listOf(Engine.shape(0 to 0, 0 to 1, 1 to 0, 1 to 1), Engine.shape(0 to 0, 0 to 1, 1 to 0, 1 to 1), Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3, 0 to 4)),
+        listOf(Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 1), Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 2, 2 to 2), Engine.shape(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0)),
+    )
 
     fun evaluate(board: IntArray, bonus: IntArray, cfg: Cfg): Double {
         var empty = 0; var holes = 0; var trans = 0; var nearFull = 0; var edge = 0
@@ -86,7 +94,8 @@ object AI {
         val cfg = LEVELS[level] ?: LEVELS[3]!!
         val slots = pieces.indices.filter { pieces[it] != null }
         if (slots.isEmpty()) return Plan(emptyList(), 0, false)
-        var best: Node? = null
+        val cands = ArrayList<Node>()
+        val keepFinal = if (level >= 4) 4 else 1
         for (order in perms(slots)) {
             var beam = listOf(Node(board, bonus, streak, mult, 0, 0.0, emptyList()))
             for ((step, slot) in order.withIndex()) {
@@ -95,16 +104,41 @@ object AI {
                     val res = Engine.place(node.board, node.bonus, piece, rc[0], rc[1])
                     val sc = Engine.score(res, node.streak, node.mult)
                     val pts = node.pts + sc.points
-                    val heur = evaluate(res.board, res.bonus, cfg) + (sc.mult - node.mult) * W_MULT
+                    // combo bonus: clearing 2+ lines/boxes in one drop is worth extra (streak & multiplier synergy)
+                    val combo = if (sc.lines >= 2) 25.0 * (sc.lines - 1) else 0.0
+                    val heur = evaluate(res.board, res.bonus, cfg) + (sc.mult - node.mult) * W_MULT + combo
                     next.add(Node(res.board, res.bonus, sc.streak, sc.mult, pts, pts * W_PTS + heur, node.moves + Move(slot, rc[0], rc[1], sc.points, sc.lines)))
                 }
                 if (next.isEmpty()) { beam = emptyList(); break }
                 next.sortByDescending { it.score }
-                beam = next.take(if (step == order.size - 1) 1 else cfg.beam)
+                beam = next.take(if (step == order.size - 1) keepFinal else cfg.beam)
             }
-            if (beam.isNotEmpty() && (best == null || beam[0].score > best!!.score)) best = beam[0]
+            cands.addAll(beam)
+        }
+        if (cands.isEmpty()) return Plan(emptyList(), 0, true)
+        cands.sortByDescending { it.score }
+        var best: Node? = cands[0]
+        if (level >= 4) {
+            // lookahead re-rank of the top 8 final boards
+            var bestVal = Double.NEGATIVE_INFINITY
+            for (c in cands.take(8)) {
+                var la = 0.0
+                for (hr in HARD_ROUNDS) {
+                    val p = plan(c.board, c.bonus, hr, c.streak, c.mult, 1)
+                    la += if (p.gameOver) -400.0 else p.total * 0.25 + evaluate(planBoard(c, hr, p), c.bonus, LEVELS[1]!!) * 0.15
+                }
+                val v = c.score + la / HARD_ROUNDS.size
+                if (v > bestVal) { bestVal = v; best = c }
+            }
         }
         val b = best ?: return Plan(emptyList(), 0, true)
         return Plan(b.moves, b.pts, false)
+    }
+
+    /** Apply a plan's moves to a candidate board (used for lookahead evaluation). */
+    private fun planBoard(c: Node, pieces: List<Piece>, p: Plan): IntArray {
+        var b = c.board; var bo = c.bonus
+        for (m in p.moves) { val r = Engine.place(b, bo, pieces[m.slot], m.r, m.c); b = r.board; bo = r.bonus }
+        return b
     }
 }
