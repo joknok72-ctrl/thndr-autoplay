@@ -1,5 +1,5 @@
 /* Web Worker wrapper so heavy planning never freezes the phone UI */
-importScripts('/static/engine.js?v=2', '/static/ai.js?v=2');
+importScripts('/static/engine.js?v=3', '/static/ai.js?v=3');
 self.onmessage = function (e) {
   const { id, board, bonus, pieces, state, opts } = e.data;
   try {

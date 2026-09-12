@@ -218,7 +218,7 @@
 
   // ---------- AI planning ----------
   let worker = null, reqId = 0;
-  function getWorker() { if (worker) return worker; try { worker = new Worker('/static/ai-worker.js?v=2'); } catch { worker = null; } return worker; }
+  function getWorker() { if (worker) return worker; try { worker = new Worker('/static/ai-worker.js?v=3'); } catch { worker = null; } return worker; }
   function runAI(pieces) {
     const payload = { board: S.board, bonus: S.bonus, pieces, state: { streak: S.streak, mult: S.mult }, opts: { level: settings.aiLevel, bonusMode: settings.bonusMode } };
     const w = getWorker();

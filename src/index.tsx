@@ -28,7 +28,7 @@ app.get('/', (c) => {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Cairo:wght@600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
-  <link href="/static/style.css?v=2" rel="stylesheet">
+  <link href="/static/style.css?v=3" rel="stylesheet">
 </head>
 <body data-theme="blue">
   <div id="app-root">
@@ -176,8 +176,9 @@ app.get('/', (c) => {
       <p><b>1.</b> اضغط على خانة من الثلاث خانات تحت وارسم القطعة (أزرق/أصفر) أو اخترها من المكتبة.</p>
       <p><b>2.</b> اضغط على أي خانة فاضية في اللوحة لتحط رقم مكافأة (50 – 2K) — بحد أقصى 3 خانات — أو مكعب أزرق/أصفر لتطابق لوحتك الحقيقية.</p>
       <p><b>3.</b> بعد إدخال 3 قطع اضغط <b>خطة الذكاء</b> ليظهر مكان كل قطعة بالترتيب (1، 2، 3) ثم <b>تنفيذ</b>.</p>
+      <p><b>القواعد:</b> يتمسح أي صف كامل، أو عمود كامل، أو <b>مربع 3×3</b> كامل (زي اللعبة الأصلية).</p>
       <p><b>4.</b> كل لفل = 3 قطع. اللفل 25 هو الأخير وبعده الفوز 🏆. اللعبة تنتهي لو مافيش مكان لأي قطعة.</p>
-      <p><b>النقاط:</b> +1 لكل مكعب، مسح صف/عمود = 20 × (عدد الصفوف)² × المضاعف، الستريك يزيد النقاط، الخانة المرقمة تُضاف × المضاعف، والمكعب الأصفر يزوّد المضاعف عند مسحه.</p>
+      <p><b>النقاط:</b> +1 لكل مكعب، مسح صف/عمود/مربع 3×3 = 20 × (عدد المسحات)² × المضاعف، الستريك يزيد النقاط، الخانة المرقمة تُضاف × المضاعف، والمكعب الأصفر يزوّد المضاعف عند مسحه.</p>
       <p><b>الذكاء الاصطناعي</b> يجرّب كل ترتيبات القطع الثلاث وكل الأماكن باستخدام Beam Search مع تقييم للفراغات والثقوب والصفوف القريبة من الامتلاء وقابلية وضع القطع مستقبلاً.</p>
     </div>
   </section>
@@ -202,9 +203,9 @@ app.get('/', (c) => {
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="/static/engine.js?v=2"></script>
-  <script src="/static/ai.js?v=2"></script>
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/engine.js?v=3"></script>
+  <script src="/static/ai.js?v=3"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>`)
 })

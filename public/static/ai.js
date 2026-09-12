@@ -44,6 +44,9 @@
       // near-full lines are opportunities (7-8/9) but 8/9 with an awkward hole is risky, still positive
       if (rowFill[k] >= 7) nearFull += (rowFill[k]-6);
       if (colFill[k] >= 7) nearFull += (colFill[k]-6);
+      // 3x3 boxes: 7-8 of 9 filled is a near-clear opportunity too
+      const br=(k/3|0)*3, bc=(k%3)*3; let bf=0; for(let r=br;r<br+3;r++) for(let c=bc;c<bc+3;c++) if(board[idx(r,c)]) bf++;
+      if (bf >= 7) nearFull += (bf-6);
     }
     // placeability of probe pieces (survival + flexibility)
     let fit = 0, dead = 0;

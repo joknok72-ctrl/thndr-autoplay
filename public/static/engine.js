@@ -79,15 +79,18 @@
     const cells = [];
     let bonusCovered = 0;
     for (const c of piece.cells) { const i = idx(r0+c.r, c0+c.c); nb[i] = c.v; cells.push(i); if (nbonus[i]) { bonusCovered += nbonus[i]; if (opts.bonusMode === 'cover') nbonus[i] = 0; } }
-    const rows = [], cols = [];
+    const rows = [], cols = [], boxes = [];
     for (let r=0;r<N;r++){ let full=true; for(let c=0;c<N;c++) if(!nb[idx(r,c)]){full=false;break;} if(full) rows.push(r); }
     for (let c=0;c<N;c++){ let full=true; for(let r=0;r<N;r++) if(!nb[idx(r,c)]){full=false;break;} if(full) cols.push(c); }
+    // 3x3 boxes (Sudoku-style) also clear when complete — as in the original THNDR game
+    for (let b=0;b<9;b++){ const br=(b/3|0)*3, bc=(b%3)*3; let full=true; for(let r=br;r<br+3&&full;r++) for(let c=bc;c<bc+3;c++) if(!nb[idx(r,c)]){full=false;break;} if(full) boxes.push(b); }
     const clearedIdx = new Set(); let orangeCleared = 0, bonusHit = 0;
     for (const r of rows) for (let c=0;c<N;c++) clearedIdx.add(idx(r,c));
     for (const c of cols) for (let r=0;r<N;r++) clearedIdx.add(idx(r,c));
+    for (const b of boxes) { const br=(b/3|0)*3, bc=(b%3)*3; for(let r=br;r<br+3;r++) for(let c=bc;c<bc+3;c++) clearedIdx.add(idx(r,c)); }
     for (const i of clearedIdx) { if (nb[i]===2) orangeCleared++; if (nbonus[i]) { bonusHit += nbonus[i]; nbonus[i] = 0; } nb[i] = 0; }
     if (opts.bonusMode === 'cover') bonusHit = bonusCovered;
-    return { board: nb, bonus: nbonus, rows, cols, lines: rows.length+cols.length, orangeCleared, yvGain: orangeCleared * (piece.yv||1), bonusHit, cells, clearedIdx: [...clearedIdx] };
+    return { board: nb, bonus: nbonus, rows, cols, boxes, lines: rows.length+cols.length+boxes.length, orangeCleared, yvGain: orangeCleared * (piece.yv||1), bonusHit, cells, clearedIdx: [...clearedIdx] };
   }
 
   /** Scoring — modeled on the screenshots: +1 per cube, line clears scale quadratically, streak & multiplier amplify. */
