@@ -130,91 +130,56 @@ class BotService : Service() {
     private fun loop() { if (isAuto()) autoLoop() else guideLoop() }
 
     /**
-     * Guide mode. Plan is LOCKED for the whole round (3 pieces). The current step is bright; the others are dim.
-     * Advance when: (a) the piece really landed on its target (verified from the screen), or
-     * (b) the user taps "التالي" on the floating button. If a piece landed elsewhere → re-plan with the rest.
+     * Guide mode — fully manual pacing, NO automatic re-planning:
+     *  • "خطة" (plan button): read the screen ONCE, compute the best order for the 3 pieces, draw ①②③ and FREEZE.
+     *  • The user places the pieces at their own pace; the drawing never changes on its own.
+     *  • "التالي": just moves the green highlight to the next step (optional).
+     *  • When the next 3 pieces appear the user presses "خطة" again.
      */
     private fun guideLoop() {
-        var steps: MutableList<GuideOverlay.Step> = mutableListOf()
+        var steps: List<GuideOverlay.Step> = emptyList()
         var cur = 0
-        var roundSig = ""              // signature of the tray at planning time
-        var baseBoard: IntArray? = null // board when the current step was shown
-        var lastTrayCount = -1
-        var stableSince = 0L
+        var frozen: Screen? = null           // screen snapshot the plan was built on (board rect + tray rects)
         overlay?.setNextVisible(true)
+        guide?.setMessage("اضغط «خطة» لما القطع الثلاث تظهر")
+        report("جاهز — اضغط «خطة»")
         while (!stopFlag) {
             try {
-                val bmp = capture() ?: run { Thread.sleep(150); null } ?: continue
-                val scr = try { ScreenParser.parse(bmp) } catch (e: ScreenParser.ParseException) {
-                    guide?.setMessage("مش شايف اللوحة — افتح اللعبة"); report("مش شايف اللوحة (${e.message})"); Thread.sleep(600); continue
-                }
-                lastBoard = scr.boardString()
-                val found = scr.piecesFound
-                if (found == 0) {
-                    steps.clear(); cur = 0; roundSig = ""
-                    idleCount++
-                    guide?.setMessage(if (idleCount > 5) "مافيش قطع — انتهت الجولة أو اللعبة" else "بانتظار القطع الجديدة…")
-                    report("بانتظار القطع…"); Thread.sleep(500); continue
-                }
-                idleCount = 0
-
-                // ---------- (re)plan when a NEW round appears (all 3 pieces fresh) or on demand ----------
-                val traySig = scr.tray.joinToString("|") { it?.piece?.toString() ?: "-" }
-                val newRound = steps.isEmpty() || (found == 3 && traySig != roundSig && found > lastTrayCount)
-                if (newRound || forceReplan) {
+                if (forceReplan) {
                     forceReplan = false
-                    guide?.setMessage("بفكر في أفضل خطة للجولة…"); report("بفكر… ($found قطع)")
-                    val pieces = scr.tray.map { it?.piece }
-                    val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
-                    if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(1200); continue }
-                    steps = plan.moves.map { m -> val tp = scr.tray[m.slot]!!; GuideOverlay.Step(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), m.slot, m.r, m.c, m.points) }.toMutableList()
-                    cur = 0; roundSig = traySig; baseBoard = scr.board.copyOf(); stableSince = 0
-                    guide?.flash(if (newRound) "خطة جديدة: ${steps.size} قطع" else "تم تعديل الخطة")
+                    guide?.setMessage("بقرأ الشاشة وبفكر…"); report("بفكر…")
+                    val bmp = capture()
+                    val scr = try { bmp?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
+                    if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
+                    lastBoard = scr.boardString()
+                    if (scr.piecesFound == 0) { guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }
+                    val plan = AI.plan(scr.board, scr.bonus, scr.tray.map { it?.piece }, 0, 1, prefs.getInt("level", 3))
+                    if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
+                    steps = plan.moves.map { m -> val tp = scr.tray[m.slot]!!; GuideOverlay.Step(tp.piece, RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat()), m.slot, m.r, m.c, m.points) }
+                    cur = 0; frozen = scr
                     vibrate(longArrayOf(0, 30, 40, 30))
+                    guide?.flash("الخطة جاهزة: ${steps.size} قطع — حطهم بالترتيب")
                 }
-                lastTrayCount = found
-
-                // ---------- verify the current step ----------
-                if (cur < steps.size) {
-                    val st = steps[cur]
-                    val base = baseBoard ?: scr.board
-                    val landed = landedAt(base, scr.board, st.piece, st.r, st.c)
-                    val stillInTray = matchTrayPiece(scr, st.piece) != null
-                    val consumed = !stillInTray || found < steps.size - cur   // piece left the tray
-                    if (landed || manualNext) {
-                        manualNext = false
+                if (manualNext) {
+                    manualNext = false
+                    if (steps.isNotEmpty()) {
                         cur++; movesDone++
                         vibrate(longArrayOf(0, 40))
-                        guide?.flash(if (cur < steps.size) "✅ تمام — القطعة ${cur + 1}" else "✅ الجولة خلصت")
-                        baseBoard = scr.board.copyOf(); stableSince = 0
-                        if (cur >= steps.size) { steps.clear(); roundSig = traySig }
-                        Thread.sleep(350); continue
+                        if (cur >= steps.size) { steps = emptyList(); guide?.setMessage("✅ خلصت الجولة — لما القطع الجديدة تظهر اضغط «خطة»"); report("خلصت الجولة") }
                     }
-                    if (consumed) {
-                        // piece is gone but not where planned → wait for animations to settle, then re-plan with the rest
-                        if (stableSince == 0L) stableSince = System.currentTimeMillis()
-                        if (System.currentTimeMillis() - stableSince > 700) {
-                            report("القطعة نزلت في مكان مختلف — بعيد التخطيط")
-                            forceReplan = true; stableSince = 0
-                        }
-                        Thread.sleep(150); continue
-                    } else stableSince = 0
                 }
-
-                // ---------- draw plan (current step bright, others dim) ----------
-                if (cur < steps.size) {
-                    // refresh tray rects for remaining pieces (tray may shift after a piece is consumed)
-                    val shown = steps.mapIndexed { i, st -> if (i < cur) st else { val tp = matchTrayPiece(scr, st.piece); st.copy(pieceRect = tp?.let { RectF(it.x0.toFloat(), it.y0.toFloat(), it.x1.toFloat(), it.y1.toFloat()) }, trayIndex = tp?.let { scr.tray.indexOf(it) } ?: st.trayIndex) } }
-                    val st = shown[cur]
+                val fz = frozen
+                if (steps.isNotEmpty() && fz != null && cur < steps.size) {
+                    val st = steps[cur]
                     val name = when (st.trayIndex) { 0 -> "اليسرى"; 1 -> "الوسطى"; else -> "اليمنى" }
                     val text = "القطعة ${cur + 1} ($name) → " + describe(st.r, st.c, st.piece)
-                    val sub = "الخطوة ${cur + 1}/${steps.size}  •  +${st.points} نقطة  •  اسحبها للشبح الأخضر"
-                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, shown, cur, text, sub))
+                    val sub = "الخطوة ${cur + 1}/${steps.size}  •  +${st.points} نقطة  •  «التالي» بعد ما تحطها"
+                    guide?.setPlan(GuideOverlay.PlanView(fz.bx0.toFloat(), fz.by0.toFloat(), fz.pitch, steps, cur, text, sub))
                     report("الخطوة ${cur + 1}/${steps.size}: قطعة ${st.trayIndex + 1} → صف ${st.r + 1} عمود ${st.c + 1}")
                 }
-                Thread.sleep(200)
+                Thread.sleep(120)
             } catch (e: Throwable) {
-                Log.e(TAG, "guide error", e); report("خطأ: ${e.message}"); Thread.sleep(600)
+                Log.e(TAG, "guide error", e); report("خطأ: ${e.message}"); Thread.sleep(500)
             }
         }
         overlay?.setNextVisible(false)
