@@ -147,8 +147,12 @@ class BotService : Service() {
             try {
                 if (forceReplan) {
                     forceReplan = false
+                    // hide ALL overlay drawings first so the screenshot contains only the game
+                    guide?.clear(); overlay?.setHiddenForCapture(true)
+                    Thread.sleep(260)
+                    var bmp = capture(); Thread.sleep(60); bmp = capture() ?: bmp   // take the freshest frame
+                    overlay?.setHiddenForCapture(false)
                     guide?.setMessage("بقرأ الشاشة وبفكر…"); report("بفكر…")
-                    val bmp = capture()
                     val scr = try { bmp?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
                     if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
                     lastBoard = scr.boardString()

@@ -76,6 +76,7 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
         }
     }
     fun setRunning(r: Boolean) { main.post { if (root != null) { btn.text = if (r) "■" else "▶"; (btn.background as GradientDrawable).setColor(Color.parseColor(if (r) "#E53935" else "#1B6BC0")); if (!r) { nextBtn.visibility = View.GONE; planBtn.visibility = View.GONE } } } }
+    fun setHiddenForCapture(h: Boolean) { main.post { root?.visibility = if (h) View.INVISIBLE else View.VISIBLE } }
     fun setNextVisible(v: Boolean) { main.post { if (root != null) { nextBtn.visibility = if (v) View.VISIBLE else View.GONE; planBtn.visibility = nextBtn.visibility } } }
     fun hide() { main.post { root?.let { runCatching { wm.removeView(it) } }; root = null; BotService.listener = null } }
 }
