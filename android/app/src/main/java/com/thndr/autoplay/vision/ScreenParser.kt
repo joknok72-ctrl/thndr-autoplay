@@ -27,7 +27,8 @@ object ScreenParser {
     class ParseException(msg: String) : Exception(msg)
 
     // ---- Color classifiers ----
-    private fun isCellBg(p: Int): Boolean { val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p); return r < 20 && g in 36..62 && b in 68..104 }
+    // Empty board cell ≈ (1,47,81). Must NOT match the page background (0,59,101) or the whole screen looks like a board.
+    private fun isCellBg(p: Int): Boolean { val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p); return r < 20 && g in 38..54 && b in 70..92 }
     fun isBlue(p: Int): Boolean { val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p); return b > 185 && r < 140 && g in 105..240 && b - r > 85 }
     fun isOrange(p: Int): Boolean { val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p); return r > 185 && g in 95..220 && b < 130 && r - b > 95 }
     private fun isGrayText(p: Int): Boolean { val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p); return r > 80 && g > 100 && b > 130 && abs(r - g) < 60 && b - r < 90 && r + g + b > 300 }
@@ -59,7 +60,20 @@ object ScreenParser {
         val cc = clusters(cols, gapPx).maxByOrNull { it[1] - it[0] }!!
         val bx0 = cc[0]; val bx1 = cc[1]
         val pitch = ((bx1 - bx0 + 1) / 9f + (by1 - by0 + 1) / 9f) / 2f
-        if (abs((bx1 - bx0) - (by1 - by0)) > pitch * 0.8f) throw ParseException("board not square: ${bx1 - bx0} x ${by1 - by0}")
+        if (abs((bx1 - bx0) - (by1 - by0)) > pitch * 0.8f) {
+            // Not square: the board must span nearly the full width, so trust the width and refine rows inside it
+            val side = bx1 - bx0
+            val rows2 = (0 until H).filter { y -> var n = 0; for (x in bx0..bx1) if (boardish[y * W + x]) n++; n > 0.75 * side }
+            if (rows2.isEmpty()) throw ParseException("board not square: ${bx1 - bx0} x ${by1 - by0}")
+            val rc2 = clusters(rows2, gapPx).maxByOrNull { it[1] - it[0] }!!
+            if (abs((rc2[1] - rc2[0]) - side) > side * 0.1f) throw ParseException("board not square: $side x ${rc2[1] - rc2[0]}")
+            return parseWithRect(px, blue, orange, boardish, W, H, bx0, rc2[0], bx1, rc2[1])
+        }
+        return parseWithRect(px, blue, orange, boardish, W, H, bx0, by0, bx1, by1)
+    }
+
+    private fun parseWithRect(px: IntArray, blue: BooleanArray, orange: BooleanArray, boardish: BooleanArray, W: Int, H: Int, bx0: Int, by0: Int, bx1: Int, by1: Int): Screen {
+        val pitch = ((bx1 - bx0 + 1) / 9f + (by1 - by0 + 1) / 9f) / 2f
 
         // --- cells ---
         val board = IntArray(N * N); val bonus = IntArray(N * N)
