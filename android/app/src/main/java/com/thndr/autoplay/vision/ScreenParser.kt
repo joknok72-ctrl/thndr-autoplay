@@ -129,14 +129,12 @@ object ScreenParser {
             else if (nText > 0.02 * tot) bonus[idx] = 50
         }
 
-        // ---- 6) tray: components of "not page background" below the board, morphologically closed ----
+        // ---- 6) tray: read pieces as a GRID of cubes (like drawing them), not by splitting blobs ----
+        // cube mask = saturated & bright pixels (icons inside cubes are light/white and don't matter);
+        // components are used only to group cubes into the 3 slots and get each piece's bounding box.
         val ty0 = minOf(H - 1, (by1 + pitch * 2.9f).toInt())
         val th = H - ty0
-        var m = BooleanArray(W * th) { val y = it / W + ty0; val x = it % W; dist(px[y * W + x], pg) > 40 }
-        fun dilate(src: BooleanArray, rad: Int): BooleanArray { val o = BooleanArray(src.size); for (y in 0 until th) for (x in 0 until W) { if (!src[y * W + x]) continue; for (dy in -rad..rad) for (dx in -rad..rad) { val yy = y + dy; val xx = x + dx; if (yy in 0 until th && xx in 0 until W) o[yy * W + xx] = true } }; return o }
-        fun invert(src: BooleanArray) = BooleanArray(src.size) { !src[it] }
-        m = invert(dilate(invert(dilate(m, 2)), 2))   // closing
-
+        val m = BooleanArray(W * th) { val y = it / W + ty0; val x = it % W; val p = px[y * W + x]; sat(p) >= 90 && mx(p) >= 120 }
         val lab = IntArray(W * th)
         class Comp(var y0: Int, var y1: Int, var x0: Int, var x1: Int, var n: Int)
         val comps = ArrayList<Comp>(); val stack = IntArray(W * th + 1); var labN = 0
@@ -155,36 +153,37 @@ object ScreenParser {
             }
             comps.add(comp)
         }
-        val minArea = (pitch * pitch * 0.06f).toInt().coerceAtLeast(20)
-        val good = comps.filter { it.n > minArea && (it.x1 - it.x0) < W * 0.4 }
+        // keep solid blobs only (fill >= 50%) — rejects our own overlay rings/arrows and thin UI lines
+        val good = comps.filter { c ->
+            val w = c.x1 - c.x0 + 1; val h = c.y1 - c.y0 + 1
+            c.n > pitch * pitch * 0.03f && w < W * 0.4f && c.n.toFloat() / (w * h) >= 0.5f && minOf(w, h) >= pitch * 0.3f
+        }
         val slots = listOf(ArrayList<Comp>(), ArrayList<Comp>(), ArrayList<Comp>())
         for (cp in good) slots[minOf(2, (((cp.x0 + cp.x1) / 2f) / (W / 3f)).toInt())].add(cp)
+        val cubePx = pitch * 0.455f          // tray cube ≈ 45.5% of a board cell (constant in THNDR)
+        val mp = cubePx * 1.12f              // cube + gap
+        val kk = (cubePx * 0.3f).toInt().coerceAtLeast(2)
         val tray = ArrayList<TrayPiece?>()
         for (sl in slots) {
             if (sl.isEmpty()) { tray.add(null); continue }
-            val prior = pitch * 0.455f
-            val dims = sl.flatMap { listOf(it.x1 - it.x0 + 1, it.y1 - it.y0 + 1) }.filter { abs(it - prior) < prior * 0.25f }
-            val cube = if (dims.isNotEmpty()) dims.average().toFloat() else prior
-            val mp = cube * 1.13f
             val minx = sl.minOf { it.x0 }; val miny = sl.minOf { it.y0 }; val maxx = sl.maxOf { it.x1 }; val maxy = sl.maxOf { it.y1 }
-            val cells = HashMap<Pair<Int, Int>, Int>()
-            for (cp in sl) {
-                val ny = maxOf(1, ((cp.y1 - cp.y0 + 1 + mp - cube) / mp).roundToInt()); val nx = maxOf(1, ((cp.x1 - cp.x0 + 1 + mp - cube) / mp).roundToInt())
-                for (yy in 0 until ny) for (xx in 0 until nx) {
-                    val cy = (cp.y0 + (yy + 0.5f) * (cp.y1 - cp.y0 + 1) / ny).toInt(); val cx = (cp.x0 + (xx + 0.5f) * (cp.x1 - cp.x0 + 1) / nx).toInt()
-                    if (cy !in 0 until th || cx !in 0 until W || !m[cy * W + cx]) continue
-                    val rr = ((cy - miny - mp / 2) / mp).roundToInt(); val c2 = ((cx - minx - mp / 2) / mp).roundToInt()
-                    var nH = 0; var nS = 0
-                    for (y in cy - 4..cy + 4) for (x in cx - 4..cx + 4) {
-                        if (y !in 0 until th || x !in 0 until W) continue
-                        val p = px[(y + ty0) * W + x]; if (sat(p) >= 90) { nH++; if (isSpecial(hue(p))) nS++ }
-                    }
-                    cells[Pair(rr, c2)] = if (nH > 0 && nS > nH / 2) 2 else 1
+            val nc = maxOf(1, ((maxx - minx + 1 + (mp - cubePx)) / mp).roundToInt())
+            val nr = maxOf(1, ((maxy - miny + 1 + (mp - cubePx)) / mp).roundToInt())
+            val pw = if (nc > 1) (maxx - minx + 1 - cubePx) / (nc - 1) else mp
+            val ph = if (nr > 1) (maxy - miny + 1 - cubePx) / (nr - 1) else mp
+            val cells = ArrayList<Cell>()
+            for (rr in 0 until nr) for (cc in 0 until nc) {
+                val cx = (minx + cubePx / 2 + cc * pw).toInt(); val cy = (miny + cubePx / 2 + rr * ph).toInt()
+                var tot = 0; var on = 0; var nH = 0; var nS = 0
+                for (y in cy - kk..cy + kk) for (x in cx - kk..cx + kk) {
+                    if (y !in 0 until th || x !in 0 until W) continue
+                    tot++; if (m[y * W + x]) { on++; val p = px[(y + ty0) * W + x]; if (sat(p) >= 90) { nH++; if (isSpecial(hue(p))) nS++ } }
                 }
+                if (tot > 0 && on > 0.45f * tot) cells.add(Cell(rr, cc, if (nH > 0 && nS > nH / 2) 2 else 1))
             }
             if (cells.isEmpty()) { tray.add(null); continue }
-            val piece = Piece(cells.map { Cell(it.key.first, it.key.second, it.value) })
-            tray.add(TrayPiece(piece, (minx + maxx) / 2f, (miny + maxy) / 2f + ty0, cube, minx, miny + ty0, maxx, maxy + ty0))
+            val piece = Piece(cells)
+            tray.add(TrayPiece(piece, (minx + maxx) / 2f, (miny + maxy) / 2f + ty0, cubePx, minx, miny + ty0, maxx, maxy + ty0))
         }
         return Screen(board, bonus, bx0, by0, bx1, by1, pitch, tray, W, H)
     }
