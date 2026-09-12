@@ -36,7 +36,7 @@ class BotService : Service() {
         @Volatile var lastBoard: String = ""
         @Volatile var movesDone = 0
         var listener: ((String) -> Unit)? = null
-        fun setStatus(s: String) { status = s; Log.i(TAG, s); listener?.invoke(s) }
+        fun report(s: String) { status = s; Log.i(TAG, s); listener?.invoke(s) }
     }
 
     private var projection: MediaProjection? = null
@@ -59,7 +59,7 @@ class BotService : Service() {
                 val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
                 if (data != null) setupProjection(code, data)
                 overlay = OverlayController(this) { toggle() }.also { it.show() }
-                setStatus("جاهز — اضغط ▶ فوق اللعبة")
+                report("جاهز — اضغط ▶ فوق اللعبة")
             }
             ACTION_TOGGLE -> toggle()
             ACTION_STOP -> { stopLoop(); stopSelf() }
@@ -80,7 +80,7 @@ class BotService : Service() {
     private fun setupProjection(code: Int, data: Intent) {
         val mpm = getSystemService(MediaProjectionManager::class.java)
         projection = mpm.getMediaProjection(code, data)
-        projection?.registerCallback(object : MediaProjection.Callback() { override fun onStop() { stopLoop(); setStatus("تم إيقاف تسجيل الشاشة") } }, null)
+        projection?.registerCallback(object : MediaProjection.Callback() { override fun onStop() { stopLoop(); report("تم إيقاف تسجيل الشاشة") } }, null)
         val wm = getSystemService(WindowManager::class.java)
         val dm = DisplayMetrics(); @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
         W = dm.widthPixels; H = dm.heightPixels
@@ -105,8 +105,8 @@ class BotService : Service() {
     private fun toggle() { if (running) stopLoop() else startLoop() }
 
     private fun startLoop() {
-        if (projection == null) { setStatus("لازم تسمح بتسجيل الشاشة أولاً"); return }
-        if (!GestureService.isRunning) { setStatus("فعّل خدمة الوصول (Accessibility) للتطبيق"); return }
+        if (projection == null) { report("لازم تسمح بتسجيل الشاشة أولاً"); return }
+        if (!GestureService.isRunning) { report("فعّل خدمة الوصول (Accessibility) للتطبيق"); return }
         stopFlag = false; running = true; overlay?.setRunning(true)
         worker = HandlerThread("bot").also { it.start(); handler = Handler(it.looper) }
         handler?.post { loop() }
@@ -115,7 +115,7 @@ class BotService : Service() {
     private fun stopLoop() {
         stopFlag = true; running = false; overlay?.setRunning(false)
         worker?.quitSafely(); worker = null
-        setStatus("متوقف")
+        report("متوقف")
     }
 
     // ---------- main loop ----------
@@ -127,35 +127,35 @@ class BotService : Service() {
             try {
                 val bmp = capture() ?: run { Thread.sleep(200); null } ?: continue
                 val scr = try { ScreenParser.parse(bmp) } catch (e: ScreenParser.ParseException) {
-                    setStatus("مش شايف اللوحة — افتح اللعبة (${e.message})"); Thread.sleep(700); continue
+                    report("مش شايف اللوحة — افتح اللعبة (${e.message})"); Thread.sleep(700); continue
                 }
                 lastBoard = scr.boardString()
                 if (scr.piecesFound == 0) {
                     idleCount++
-                    setStatus(if (idleCount > 6) "مافيش قطع — انتهت الجولة/اللعبة؟" else "بانتظار القطع…")
+                    report(if (idleCount > 6) "مافيش قطع — انتهت الجولة/اللعبة؟" else "بانتظار القطع…")
                     Thread.sleep(600); continue
                 }
                 idleCount = 0
                 val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
-                if (sig == lastSig) { sameCount++; if (sameCount > 3) { setStatus("الشاشة ما اتغيرتش — بعيد المحاولة"); prefs.edit().putBoolean("calibrated", false).apply() } } else sameCount = 0
+                if (sig == lastSig) { sameCount++; if (sameCount > 3) { report("الشاشة ما اتغيرتش — بعيد المحاولة"); prefs.edit().putBoolean("calibrated", false).apply() } } else sameCount = 0
                 lastSig = sig
 
                 val pieces = scr.tray.map { it?.piece }
-                setStatus("بفكر… (${scr.piecesFound} قطع)")
+                report("بفكر… (${scr.piecesFound} قطع)")
                 val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 3))
-                if (plan.gameOver || plan.moves.isEmpty()) { setStatus("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
+                if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
                 // Execute only the FIRST move, then re-read the screen (robust to clears/animations)
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!
                 val ok = performMove(scr, tp, mv.r, mv.c)
-                if (!ok) { setStatus("الإيماءة فشلت"); Thread.sleep(500); continue }
+                if (!ok) { report("الإيماءة فشلت"); Thread.sleep(500); continue }
                 movesDone++
-                setStatus("حركة #$movesDone: قطعة ${mv.slot + 1} → (${mv.r + 1},${mv.c + 1}) +${mv.points}")
+                report("حركة #$movesDone: قطعة ${mv.slot + 1} → (${mv.r + 1},${mv.c + 1}) +${mv.points}")
                 Thread.sleep(prefs.getInt("delay", 650).toLong())
                 // verify & auto-calibrate
                 verifyAndCalibrate(scr, tp, mv.r, mv.c)
             } catch (e: Throwable) {
-                Log.e(TAG, "loop error", e); setStatus("خطأ: ${e.message}"); Thread.sleep(800)
+                Log.e(TAG, "loop error", e); report("خطأ: ${e.message}"); Thread.sleep(800)
             }
         }
     }
@@ -195,11 +195,11 @@ class BotService : Service() {
             if (okAll && hit > bestHit) { bestHit = hit; bestDr = dr; bestDc = dc }
         }
         val placedSomewhere = after.tray.count { it != null } < before.tray.count { it != null } || bestHit == p.size
-        if (!placedSomewhere) { setStatus("القطعة ما نزلتش — بعدل المعايرة"); nudge(0f, -before.pitch * 0.25f); return }
+        if (!placedSomewhere) { report("القطعة ما نزلتش — بعدل المعايرة"); nudge(0f, -before.pitch * 0.25f); return }
         if (bestHit >= p.size - 1 && (bestDr != 0 || bestDc != 0)) {
             // landed shifted by (dr,dc): compensate
             nudge(-bestDc * before.pitch, -bestDr * before.pitch)
-            setStatus("معايرة: تعديل الإزاحة (${-bestDc},${-bestDr}) خانة")
+            report("معايرة: تعديل الإزاحة (${-bestDc},${-bestDr}) خانة")
         } else if (bestDr == 0 && bestDc == 0 && bestHit >= p.size - 1) prefs.edit().putBoolean("calibrated", true).apply()
     }
     private fun nudge(dx: Float, dy: Float) {
