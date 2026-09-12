@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:background="#0A2C57">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp" android:layoutDirection="rtl">
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="⚡ THNDR AutoPlay" android:textSize="26sp" android:textStyle="bold" android:textColor="#FFFFFF" android:gravity="center"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بوت يشوف الشاشة ويلعب THNDR Block لوحده بأقوى ذكاء اصطناعي" android:textColor="#7F97B8" android:gravity="center" android:layout_marginBottom="16dp"/>
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="1) الأذونات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
+    <TextView android:id="@+id/stOverlay" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:layout_marginTop="6dp"/>
+    <Button android:id="@+id/btnOverlay" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="فتح إعداد الظهور فوق التطبيقات"/>
+    <TextView android:id="@+id/stAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:layout_marginTop="6dp"/>
+    <Button android:id="@+id/btnAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="فتح إعدادات خدمة الوصول"/>
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2) الإعدادات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="قوة الذكاء الاصطناعي" android:textColor="#CFE1F7"/>
+    <SeekBar android:id="@+id/seekLevel" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/lblLevel" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="الانتظار بعد كل حركة (للأنيميشن)" android:textColor="#CFE1F7" android:layout_marginTop="8dp"/>
+    <SeekBar android:id="@+id/seekDelay" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/lblDelay" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="سرعة السحب" android:textColor="#CFE1F7" android:layout_marginTop="8dp"/>
+    <SeekBar android:id="@+id/seekMove" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/lblMove" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
+    <Button android:id="@+id/btnResetCal" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="تصفير المعايرة التلقائية" style="?attr/borderlessButtonStyle" android:textColor="#7F97B8"/>
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) التشغيل" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
+    <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="56dp" android:text="▶ ابدأ (تسجيل الشاشة + زر عائم)" android:backgroundTint="#059669"/>
+    <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="■ إيقاف البوت" android:backgroundTint="#E53935"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block، وبعدين اضغط الزر العائم ▶. البوت هيقرأ اللوحة والقطع ويلعب لوحده لحد ما تخلص اللعبة." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
+
+    <TextView android:id="@+id/stBot" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:fontFamily="monospace" android:layout_marginTop="12dp" android:layoutDirection="ltr" android:textDirection="ltr"/>
+</LinearLayout>
+</ScrollView>

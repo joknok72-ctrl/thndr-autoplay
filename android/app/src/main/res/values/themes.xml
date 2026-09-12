@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.Thndr" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#1B6BC0</item>
+        <item name="colorPrimaryVariant">#0A2C57</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#FFA726</item>
+        <item name="android:windowBackground">#0A2C57</item>
+        <item name="android:statusBarColor">#041A33</item>
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+</resources>

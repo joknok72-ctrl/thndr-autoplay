@@ -80,51 +80,59 @@ object ScreenParser {
             }
         }
 
-        // --- tray: connected components of blue/orange below the board ---
-        val ty0 = minOf(H - 1, (by1 + pitch * 1.5f).toInt())
+        // --- tray: components of blue/orange below the board (classifier relative to page bg so dimmed pieces still count) ---
+        val ty0 = minOf(H - 1, (by1 + pitch * 2.9f).toInt())
+        val trayMask = BooleanArray(W * H); val trayOrange = BooleanArray(W * H)
+        for (y in ty0 until H) for (x in 0 until W) {
+            val i = y * W + x; val p = px[i]; val r = Color.red(p); val g = Color.green(p); val b = Color.blue(p)
+            val tb = b - r > 60 && b > 130 && g > 70 && b > g + 20
+            val to = r - b > 60 && r > 120
+            trayMask[i] = tb || to; trayOrange[i] = to
+        }
         val lab = IntArray(W * H)
-        data class Comp(var y0: Int, var y1: Int, var x0: Int, var x1: Int, var n: Int)
+        class Comp(var y0: Int, var y1: Int, var x0: Int, var x1: Int, var n: Int)
         val comps = ArrayList<Comp>()
         val stack = IntArray(W * (H - ty0) + 1); var labN = 0
         for (y in ty0 until H) for (x in 0 until W) {
             val s = y * W + x
-            if ((blue[s] || orange[s]) && lab[s] == 0) {
+            if (trayMask[s] && lab[s] == 0) {
                 labN++; var sp = 0; stack[sp++] = s; lab[s] = labN
                 val comp = Comp(y, y, x, x, 0)
                 while (sp > 0) {
                     val j = stack[--sp]; comp.n++
                     val jy = j / W; val jx = j % W
                     if (jy < comp.y0) comp.y0 = jy; if (jy > comp.y1) comp.y1 = jy; if (jx < comp.x0) comp.x0 = jx; if (jx > comp.x1) comp.x1 = jx
-                    val nbs = intArrayOf(j - W, j + W, j - 1, j + 1)
-                    for (nIdx in nbs) {
-                        if (nIdx < ty0 * W || nIdx >= W * H) continue
-                        if ((nIdx == j - 1 && jx == 0) || (nIdx == j + 1 && jx == W - 1)) continue
-                        if ((blue[nIdx] || orange[nIdx]) && lab[nIdx] == 0) { lab[nIdx] = labN; stack[sp++] = nIdx }
-                    }
+                    if (jy > ty0) { val n2 = j - W; if (trayMask[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
+                    if (jy < H - 1) { val n2 = j + W; if (trayMask[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
+                    if (jx > 0) { val n2 = j - 1; if (trayMask[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
+                    if (jx < W - 1) { val n2 = j + 1; if (trayMask[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
                 }
                 comps.add(comp)
             }
         }
-        val minArea = (pitch * pitch * 0.04f).toInt().coerceAtLeast(20)
+        val minArea = (pitch * pitch * 0.06f).toInt().coerceAtLeast(20)
         val good = comps.filter { it.n > minArea && (it.x1 - it.x0) < W * 0.4 }
         val slots = listOf(ArrayList<Comp>(), ArrayList<Comp>(), ArrayList<Comp>())
         for (cp in good) slots[minOf(2, (((cp.x0 + cp.x1) / 2f) / (W / 3f)).toInt())].add(cp)
         val tray = ArrayList<TrayPiece?>()
         for (sl in slots) {
             if (sl.isEmpty()) { tray.add(null); continue }
-            // cube size = smallest dimension among components (a lone cube or a 1-wide arm)
-            val cube = sl.minOf { minOf(it.x1 - it.x0 + 1, it.y1 - it.y0 + 1) }.toFloat()
+            // tray cube ≈ 45.5% of a board cell; refine with component dimensions close to that prior
+            val prior = pitch * 0.455f
+            val dims = sl.flatMap { listOf(it.x1 - it.x0 + 1, it.y1 - it.y0 + 1) }.filter { abs(it - prior) < prior * 0.25f }
+            val cube = if (dims.isNotEmpty()) dims.average().toFloat() else prior
             val mp = cube * 1.13f
             val minx = sl.minOf { it.x0 }; val miny = sl.minOf { it.y0 }; val maxx = sl.maxOf { it.x1 }; val maxy = sl.maxOf { it.y1 }
             val cells = HashMap<Pair<Int, Int>, Int>()
             for (cp in sl) {
-                val ny = maxOf(1, ((cp.y1 - cp.y0 + 1) / mp).roundToInt()); val nx = maxOf(1, ((cp.x1 - cp.x0 + 1) / mp).roundToInt())
+                val ny = maxOf(1, ((cp.y1 - cp.y0 + 1 + mp - cube) / mp).roundToInt()); val nx = maxOf(1, ((cp.x1 - cp.x0 + 1 + mp - cube) / mp).roundToInt())
                 for (yy in 0 until ny) for (xx in 0 until nx) {
                     val cy = (cp.y0 + (yy + 0.5f) * (cp.y1 - cp.y0 + 1) / ny).toInt(); val cx = (cp.x0 + (xx + 0.5f) * (cp.x1 - cp.x0 + 1) / nx).toInt()
+                    if (cy >= H || cx >= W) continue
                     val i = cy * W + cx
-                    if (!(blue[i] || orange[i])) continue
+                    if (!trayMask[i]) continue
                     val rr = ((cy - miny - mp / 2) / mp).roundToInt(); val c2 = ((cx - minx - mp / 2) / mp).roundToInt()
-                    var o = 0; for (y in cy - 1..cy + 1) for (x in cx - 1..cx + 1) if (orange[y * W + x]) o++
+                    var o = 0; for (y in cy - 1..cy + 1) for (x in cx - 1..cx + 1) if (y in 0 until H && x in 0 until W && trayOrange[y * W + x]) o++
                     cells[Pair(rr, c2)] = if (o >= 4) 2 else 1
                 }
             }

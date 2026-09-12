@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">THNDR AutoPlay</string>
+    <string name="access_label">THNDR AutoPlay (الإيماءات)</string>
+    <string name="access_desc">يسمح للبوت بسحب القطع على الشاشة بدلاً منك داخل لعبة THNDR Block.</string>
+</resources>

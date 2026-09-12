@@ -1,5 +1,9 @@
 # THNDR AI Block
 
+> 📱 **تطبيق الأندرويد (يلعب لوحده على اللعبة الحقيقية):** انظر [`android/`](android/README.md) — نزّل الـ APK من [Releases](https://github.com/joknok72-ctrl/thndr-autoplay/releases/latest).
+> 🌐 **نسخة الويب (إنت تدخل القطع والذكاء يخطط):** https://thndr-ai-block.pages.dev
+
+
 ## Project Overview
 - **Name**: THNDR AI Block
 - **Goal**: نسخة موبايل من لعبة THNDR Block (لوحة 9×9) يلعبها **ذكاء اصطناعي** بدلاً من اللاعب. المستخدم يُدخل القطع الثلاث فقط (ويحدد اختيارياً الخانات المرقمة والمكعبات الصفراء) والكمبيوتر يختار أقوى الحركات.
@@ -17,6 +21,7 @@
   - PWA قابل للتثبيت على الهاتف + حفظ تلقائي للحالة والإحصائيات في localStorage.
 
 ## URLs
+- **GitHub**: https://github.com/joknok72-ctrl/thndr-autoplay
 - **Production**: https://thndr-ai-block.pages.dev
 - **Latest deploy**: https://71f190e1.thndr-ai-block.pages.dev
 - **Health**: `GET /api/health`
