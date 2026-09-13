@@ -287,6 +287,7 @@ class BotService : Service() {
         if (!on) { report(detail); guide?.setMessage("❌ $detail"); Thread.sleep(2500); running = false; overlay?.setRunning(false); guide?.clear(); return }
         report(detail); guide?.flash("Device Relay $detail — البوت هيلعب لوحده")
         rc.releaseAll()   // no finger left down from a previous run
+        loadCal()
         var lastSig = ""; var stuck = 0; var failures = 0
         while (!stopFlag) {
             try {
@@ -299,7 +300,7 @@ class BotService : Service() {
                 }
                 idleCount = 0
                 val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
-                if (sig == lastSig) { stuck++; if (stuck >= 3) { report("الشاشة ما بتتغيرش — بصفّر المعايرة وبعيد"); prefs.edit().remove("offX").remove("offY").apply(); stuck = 0 } } else stuck = 0
+                if (sig == lastSig) { stuck++; if (stuck >= 3) { report("الشاشة ما بتتغيرش — بعيد قياس الهندسة"); cal = null; stuck = 0 } } else stuck = 0
                 lastSig = sig
 
                 // ---- optional approval of the read pieces ("I only approve the drawing") ----
@@ -335,13 +336,24 @@ class BotService : Service() {
                 for ((i, m) in plan.moves.withIndex()) {
                     if (stopFlag) break
                     val piece = pieces[m.slot]!!
-                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, steps, i, "${i + 1}  ←  بتطير لمكانها ✨", "+${m.points}"))
+                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, steps, i, "${i + 1}  ←  بتنزل في مكانها بالظبط", "+${m.points}"))
                     Thread.sleep(150)
                     // freshest tray position for this slot (pieces keep their slots, but re-read to be safe)
                     val tp = scr.tray.getOrNull(m.slot) ?: run { roundOk = false; null } ?: break
-                    // baseline frame (board without the flying piece) for the snap detector
+                    // baseline frame (board without any flying piece)
                     val base = captureClean() ?: run { roundOk = false; null } ?: break
-                    val r = magicSnap(rc, scr, base, tp, piece, m.r, m.c)
+                    // 1) geometry known for this board size? if not, measure it with a harmless pass (nothing is placed)
+                    if (cal == null || abs(calPitch - scr.pitch) > 1.5f) {
+                        guide?.setMessage("بقيس هندسة السحب مرة واحدة…"); report("بقيس الهندسة…")
+                        val (cc, msg) = measureGeometry(rc, scr, base, tp, piece)
+                        if (cc == null) { failures++; report(msg); guide?.setMessage("❌ $msg"); roundOk = false; Thread.sleep(600); break }
+                        cal = cc; calPitch = scr.pitch; report(msg)
+                        // the piece went back to its slot; re-read the screen so the tray box is fresh
+                        val again = waitSettled() ?: run { roundOk = false; null } ?: break
+                        if (!boardsCompatible(scr.board, again.board) || again.piecesFound != scr.piecesFound) { report("الشاشة اتغيرت بعد القياس — بعيد التخطيط"); roundOk = false; break }
+                    }
+                    // 2) one exact drag
+                    val r = placeExact(rc, scr, tp, piece, m.r, m.c, cal!!)
                     if (!r.first) {
                         failures++
                         report("النقل فشل: ${r.second}"); guide?.setMessage("❌ ${r.second}")
@@ -358,10 +370,14 @@ class BotService : Service() {
                         report("✅ #$movesDone: قطعة ${m.slot + 1} → (${m.r + 1},${m.c + 1}) +${m.points} — ${r.second}")
                         board = expect.board; bonus = expect.bonus; if (expect.orangeCleared > 0) mult++
                     } else {
-                        // landed elsewhere? (should be rare with the closed loop) — correct the remembered offset and re-plan from the real screen
+                        // landed elsewhere? — correct the measured geometry by the exact cell shift and re-plan from the real screen
                         val shift = findShift(board, after.board, piece, m.r, m.c)
-                        if (shift == null) { report("القطعة ما نزلتش — بعيد من الشاشة الحقيقية") }
-                        else { nudge(-shift.second * scr.pitch, -shift.first * scr.pitch); report("نزلت مزحزحة (${shift.first},${shift.second}) — عدّلت المعايرة") }
+                        if (shift == null) { report("القطعة ما نزلتش — بعيد القياس"); cal = null }
+                        else {
+                            // landed shifted by whole cells → our geometry is off by exactly that; fix it (no re-measure needed)
+                            val cc = cal!!; cal = Cal(cc.offX + shift.second * scr.pitch, cc.offY + shift.first * scr.pitch, cc.scale)
+                            report("نزلت مزحزحة (${shift.first},${shift.second}) — صحّحت الهندسة")
+                        }
                         roundOk = false; break
                     }
                 }
@@ -375,59 +391,90 @@ class BotService : Service() {
         editor?.hide(); guide?.clear()
     }
 
-    // ---------- "magic snap": closed-loop placement with a held finger ----------
+    // ---------- "measure then lock": learn the finger→piece geometry BEFORE placing anything ----------
     /**
-     * The piece "flies" to its cell by itself:
-     *  1) one combo: press the tray piece, lift it a bit (the game enlarges it), glide to where the target SHOULD be and
-     *     keep the finger DOWN (persistent finger 0 in Device Relay).
-     *  2) capture the frame, find the flying piece (new saturated cube pixels vs the baseline frame), measure its exact
-     *     center vs the target cells' center → move the held finger by the difference (sub-cell precision).
-     *  3) repeat until the error is < 12% of a cell (usually 0–1 corrections), then release. The measured finger offset is
-     *     remembered, so the next pieces land exactly on the first try.
-     * Returns (ok, message).
+     * The game positions a dragged piece relative to the FINGER with a fixed offset and a fixed scale (the piece grows
+     * to board size). We measure both with a harmless pass: lift the piece, hover it over the board (no drop — the stroke
+     * returns to the tray before releasing), photograph it in the air, and compare its cube grid to the finger point.
+     * Result: exact finger offset (px) + scale. Cached per board geometry (pitch) so it runs once per game/theme.
      */
-    private fun magicSnap(rc: RelayClient, scr: Screen, base: Bitmap, tp: com.thndr.autoplay.vision.TrayPiece, piece: com.thndr.autoplay.engine.Piece, r: Int, c: Int): Pair<Boolean, String> {
-        val pitch = scr.pitch
-        val tx = scr.bx0 + (c + piece.w / 2f) * pitch           // desired center of the piece on the board
-        val ty = scr.by0 + (r + piece.h / 2f) * pitch
-        val offX = prefs.getFloat("offX", 0f); val offY = prefs.getFloat("offY", -pitch * 0.9f)
-        var fx = tx + offX; var fy = ty + offY                   // finger position
-        overlay?.setHiddenForCapture(true); guide?.clear()
-        try {
-            val l = rc.lift(tp.cx, tp.cy, fx, fy, pitch * 0.6f)
-            if (!l.ok) { rc.releaseAll(); return false to "مسك القطعة فشل: ${l.error}" }
-            var lastErr = Float.MAX_VALUE; var corrections = 0
-            for (iter in 0 until 5) {
-                Thread.sleep(if (iter == 0) 140 else 90)
-                val frame = capture() ?: return false to "تصوير الشاشة فشل".also { rc.releaseAll() }
-                val fp = locateFlying(base, frame, scr, piece)
-                if (fp == null) {
-                    if (iter == 0) { Thread.sleep(150); continue }   // the pick-up animation may still be running
-                    rc.releaseAll(); return false to "مش شايف القطعة وهي طايرة — بعيد"
-                }
-                val dx = tx - fp.first; val dy = ty - fp.second
-                val err = maxOf(abs(dx), abs(dy))
-                Log.i(TAG, "snap iter=$iter err=${"%.1f".format(err)} px (dx=${"%.0f".format(dx)}, dy=${"%.0f".format(dy)}) scale=${"%.2f".format(fp.third)}")
-                if (err <= pitch * 0.12f) break
-                if (err > lastErr * 1.5f && iter > 1) break          // not converging — don't oscillate
-                lastErr = err
-                // the flying piece may be drawn at a different scale than the board — but it moves 1:1 with the finger
-                fx += dx; fy += dy; corrections++
-                val mv = rc.fingerMove(fx, fy, 110)
-                if (!mv.ok) { rc.releaseAll(); return false to "تحريك الإصبع فشل: ${mv.error}" }
-            }
-            // remember the calibrated finger offset (so the next pieces need no correction at all)
-            prefs.edit().putFloat("offX", fx - tx).putFloat("offY", fy - ty).putBoolean("calibrated", true).apply()
-            val up = rc.fingerUp()
-            if (!up.ok) rc.releaseAll()
-            return true to (if (corrections == 0) "نزلت بالملي من أول مرة" else "نزلت بالملي بعد $corrections تعديل")
-        } finally { overlay?.setHiddenForCapture(false) }
+    private class Cal(val offX: Float, val offY: Float, val scale: Float)
+    private var cal: Cal? = null
+        set(v) { field = v; prefs.edit().apply { if (v == null) remove("calOffX") else putFloat("calOffX", v.offX).putFloat("calOffY", v.offY).putFloat("calScale", v.scale) }.apply() }
+    private var calPitch = 0f
+        set(v) { field = v; prefs.edit().putFloat("calPitch", v).apply() }
+    private fun loadCal() {
+        if (prefs.contains("calOffX")) { cal = Cal(prefs.getFloat("calOffX", 0f), prefs.getFloat("calOffY", 0f), prefs.getFloat("calScale", 1f)); calPitch = prefs.getFloat("calPitch", 0f) }
     }
 
     /**
-     * Locate the piece being dragged: cube-colored pixels present in `frame` but not in `base` (the freshly vacated tray
-     * slot is background now, so it never counts). Uses robust row/column projections to get the bounding box, then
-     * returns (centerX, centerY, scale) or null when nothing piece-sized is visible.
+     * Builds ONE stroke with exact timing. Android replays a path at constant speed, so a "dwell" is a tight zig-zag
+     * whose length equals speed × ms (the same trick Device Relay uses for joystick holds).
+     */
+    private class Stroke(private val speedPxPerMs: Float) {
+        val pts = ArrayList<Pair<Float, Float>>(); var ms = 0f; private var x = 0f; private var y = 0f
+        fun start(x0: Float, y0: Float) { x = x0; y = y0; pts.add(x to y) }
+        fun moveTo(nx: Float, ny: Float) { val d = Math.hypot((nx - x).toDouble(), (ny - y).toDouble()).toFloat(); ms += d / speedPxPerMs; x = nx; y = ny; pts.add(x to y) }
+        fun dwell(dur: Float) { val len = dur * speedPxPerMs; val n = maxOf(1, (len / 3f).roundToInt()); for (i in 0 until n) { pts.add(x + 1.5f to y); pts.add(x to y) }; ms += n * 3f / speedPxPerMs }
+        val totalMs get() = ms.roundToInt().toLong().coerceAtLeast(60)
+    }
+    private val SPEED = 1.6f   // px per ms while moving (≈ a calm human drag)
+
+    private fun measureGeometry(rc: RelayClient, scr: Screen, base: Bitmap, tp: com.thndr.autoplay.vision.TrayPiece, piece: com.thndr.autoplay.engine.Piece): Pair<Cal?, String> {
+        val pitch = scr.pitch
+        val hx = scr.bx0 + 4.5f * pitch; val hy = scr.by0 + 4.5f * pitch + pitch * 0.9f   // hover finger near board center
+        val st = Stroke(SPEED)
+        st.start(tp.cx, tp.cy); st.dwell(260f)                     // press & hold → the game picks the piece up
+        st.moveTo(tp.cx, tp.cy - pitch * 0.6f)                     // lift
+        st.moveTo(hx, hy)                                          // glide over the board
+        val hoverStart = st.ms; st.dwell(1300f); val hoverEnd = st.ms
+        st.moveTo(tp.cx, tp.cy + pitch * 0.3f); st.dwell(120f)     // back home → releasing there returns it to the tray
+        var measured: Triple<Float, Float, Float>? = null
+        val worker = Thread {
+            // the HTTP round-trip adds latency before the stroke starts; sample generously across the hover window
+            Thread.sleep((hoverStart + 300).toLong())
+            val found = ArrayList<Triple<Float, Float, Float>>()
+            val tEnd = System.currentTimeMillis() + (hoverEnd - hoverStart).toLong() + 400
+            while (System.currentTimeMillis() < tEnd && found.size < 6) {
+                val f = capture(); if (f != null) locateFlying(base, f, scr, piece)?.let { found.add(it) }
+                Thread.sleep(60)
+            }
+            if (found.size >= 2) {
+                val xs = found.map { it.first }.sorted(); val ys = found.map { it.second }.sorted(); val ss = found.map { it.third }.sorted()
+                measured = Triple(xs[xs.size / 2], ys[ys.size / 2], ss[ss.size / 2])
+            }
+        }
+        worker.start()
+        val r = rc.swipePath(st.pts, st.totalMs)
+        worker.join(5000)
+        if (!r.ok) return null to "إيماءة القياس فشلت: ${r.error}"
+        val m = measured ?: return null to "مش شايف القطعة وهي مرفوعة — بعيد القياس"
+        val c = Cal(m.first - hx, m.second - hy, m.third)
+        Log.i(TAG, "geometry: off=(${"%.0f".format(c.offX)},${"%.0f".format(c.offY)}) scale=${"%.2f".format(c.scale)}")
+        return c to "تم قياس الهندسة: إزاحة (${c.offX.toInt()},${c.offY.toInt()}) مقياس ${"%.2f".format(c.scale)}"
+    }
+
+    /**
+     * Place = ONE exact stroke: press-hold at the tray piece → lift → glide so that the piece's center is exactly on the
+     * target cells' center (finger = target − measured offset) → dwell there so the game locks the ghost → release.
+     */
+    private fun placeExact(rc: RelayClient, scr: Screen, tp: com.thndr.autoplay.vision.TrayPiece, piece: com.thndr.autoplay.engine.Piece, r: Int, c: Int, cal: Cal): Pair<Boolean, String> {
+        val pitch = scr.pitch
+        val tx = scr.bx0 + (c + piece.w / 2f) * pitch; val ty = scr.by0 + (r + piece.h / 2f) * pitch
+        val fx = tx - cal.offX; val fy = ty - cal.offY
+        val st = Stroke(SPEED)
+        st.start(tp.cx, tp.cy); st.dwell(260f)
+        st.moveTo(tp.cx, tp.cy - pitch * 0.6f)
+        st.moveTo(fx, fy)
+        st.dwell(420f)
+        val res = rc.swipePath(st.pts, st.totalMs)
+        if (!res.ok) return false to "السحب فشل: ${res.error}"
+        return true to "نزلت في مكانها بالظبط"
+    }
+
+    /**
+     * Locate the lifted piece: cube-colored pixels present in `frame` but not in `base` (the vacated tray slot is
+     * background now, so it never counts). Robust row/column projections give the bounding box → (centerX, centerY, scale).
      */
     private fun isCube(p: Int): Boolean {
         val r = (p shr 16) and 255; val g = (p shr 8) and 255; val b = p and 255
@@ -456,7 +503,6 @@ class BotService : Service() {
         }
         val cubeArea = (scr.pitch * scr.pitch) / (step * step)
         if (total < cubeArea * 0.25f * piece.size) return null
-        // robust bbox: first/last row & col whose count exceeds 25% of one cube side
         val thr = (scr.pitch * 0.25f / step).toInt().coerceAtLeast(2)
         var cx0 = -1; var cx1 = -1; var cy0 = -1; var cy1 = -1
         for (i in 0 until w) if (colP[i] > thr) { if (cx0 < 0) cx0 = i; cx1 = i }
@@ -464,8 +510,7 @@ class BotService : Service() {
         if (cx0 < 0 || cy0 < 0) return null
         val bw = (cx1 - cx0 + 1) * step.toFloat(); val bh = (cy1 - cy0 + 1) * step.toFloat()
         val scaleX = bw / (piece.w * scr.pitch); val scaleY = bh / (piece.h * scr.pitch)
-        // must look like our piece (drawn between 70% and 130% of board scale, roughly square cubes)
-        if (scaleX < 0.6f || scaleX > 1.45f || scaleY < 0.6f || scaleY > 1.45f) return null
+        if (scaleX < 0.6f || scaleX > 1.45f || scaleY < 0.6f || scaleY > 1.45f) return null   // must look like our piece
         val cx = x0 + (cx0 + cx1 + 1) / 2f * step; val cy = y0 + (cy0 + cy1 + 1) / 2f * step
         return Triple(cx, cy, (scaleX + scaleY) / 2f)
     }

@@ -84,39 +84,25 @@ class RelayClient(server: String, private val token: String, val deviceId: Strin
 
     fun tap(x: Float, y: Float): Result = command(JSONObject().put("type", "tap").put("x", x).put("y", y))
 
-    // ---- persistent finger (stays DOWN between HTTP calls) — the basis of closed-loop "magic snap" placement ----
-    /** Press at (x1,y1), pick the piece up with a tiny lift, glide to (x2,y2) and KEEP the finger down. One round-trip. */
-    fun lift(x1: Float, y1: Float, x2: Float, y2: Float, liftPx: Float): Result {
-        val steps = JSONArray()
-            .put(JSONObject().put("op", "down").put("finger", 0).put("x", x1).put("y", y1).put("duration", 140))
-            .put(JSONObject().put("op", "move").put("finger", 0).put("x", x1).put("y", y1 - liftPx).put("duration", 110))
-            .put(JSONObject().put("op", "move").put("finger", 0).put("x", (x1 + x2) / 2f).put("y", (y1 - liftPx + y2) / 2f).put("duration", 170))
-            .put(JSONObject().put("op", "move").put("finger", 0).put("x", x2).put("y", y2).put("duration", 170))
-        return command(JSONObject().put("type", "combo").put("combo", steps), 25000)
-    }
-    /** Nudge the held finger to an absolute point (finger stays down). */
-    fun fingerMove(x: Float, y: Float, durMs: Long = 120): Result =
-        command(JSONObject().put("type", "finger_move").put("finger", 0).put("x", x).put("y", y).put("duration", durMs))
-    /** Release the held finger (drop the piece). */
-    fun fingerUp(): Result = command(JSONObject().put("type", "finger_up").put("finger", 0))
-    /** Safety: release everything. */
+    /** Safety: lift any finger Device Relay might still be holding from an earlier session. */
     fun releaseAll(): Result = command(JSONObject().put("type", "finger_up").put("finger", -1))
 
     /**
-     * Drag with a real press-hold, smooth move, short settle at the target and release.
-     * 1) `combo` (on-device script, exact timing)  2) fallback: plain `drag` action.
+     * Drag = the relay's proven two-gesture drag (press-hold as one stroke, then continueStroke to the target).
+     * Exactly what a finger does: press, hold a moment, move, release.
      */
-    fun drag(x1: Float, y1: Float, x2: Float, y2: Float, holdMs: Long, moveMs: Long, settleMs: Long): Result {
-        val steps = JSONArray()
-            .put(JSONObject().put("op", "down").put("finger", 0).put("x", x1).put("y", y1).put("duration", holdMs.coerceIn(20, 1000)))
-            .put(JSONObject().put("op", "move").put("finger", 0).put("x", (x1 + x2) / 2f).put("y", (y1 + y2) / 2f).put("duration", (moveMs / 2).coerceAtLeast(40)))
-            .put(JSONObject().put("op", "move").put("finger", 0).put("x", x2).put("y", y2).put("duration", (moveMs / 2).coerceAtLeast(40)))
-            .put(JSONObject().put("op", "wait").put("duration", settleMs.coerceIn(0, 2000)))
-            .put(JSONObject().put("op", "up").put("finger", 0))
-        val combo = command(JSONObject().put("type", "combo").put("combo", steps), (holdMs + moveMs + settleMs + 20000).toInt())
-        if (combo.ok) return combo
-        Log.w(TAG, "combo failed (${combo.error}) → fallback drag")
-        return command(JSONObject().put("type", "drag").put("x1", x1).put("y1", y1).put("x2", x2).put("y2", y2)
-            .put("holdMs", holdMs.coerceIn(50, 5000)).put("duration", (moveMs + settleMs).coerceIn(50, 10000)), (holdMs + moveMs + settleMs + 20000).toInt())
+    fun drag(x1: Float, y1: Float, x2: Float, y2: Float, holdMs: Long, moveMs: Long): Result =
+        command(JSONObject().put("type", "drag").put("x1", x1).put("y1", y1).put("x2", x2).put("y2", y2)
+            .put("holdMs", holdMs.coerceIn(50, 5000)).put("duration", moveMs.coerceIn(50, 10000)), (holdMs + moveMs + 20000).toInt())
+
+    /**
+     * ONE continuous stroke through many points (Android moves along the path at constant speed, so a dense
+     * zig-zag around a point = the finger "dwells" there). Used for the measurement pass: lift a piece, hover it
+     * over the board for ~1.3 s while we photograph it, then bring it back to the tray and release (no placement).
+     */
+    fun swipePath(points: List<Pair<Float, Float>>, durationMs: Long): Result {
+        val arr = JSONArray()
+        for ((x, y) in points) arr.put(JSONObject().put("x", x).put("y", y))
+        return command(JSONObject().put("type", "swipe_path").put("points", arr).put("duration", durationMs.coerceIn(50, 30000)), (durationMs + 20000).toInt())
     }
 }
