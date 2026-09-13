@@ -39,3 +39,13 @@
 cd android && gradle assembleRelease   # يحتاج JDK 17 + Android SDK 34
 ```
 الـ APK موقّع بمفتاح debug (قابل للتثبيت مباشرة). GitHub Actions يبنيه تلقائيًا عند كل push ويرفعه في Release `latest`.
+
+## v1.8.0 — وضع Device Relay (لعب آلي كامل) 🔗
+- وضع ثالث «البوت عبر Device Relay»: هذا التطبيق يقرأ الشاشة (MediaProjection) ويخطط بالذكاء الاصطناعي (مستوى 4)،
+  وتطبيق **Device Relay** (https://github.com/joknok72-ctrl/device-relay) المثبّت على نفس الموبايل ينفّذ السحب عبر
+  خدمة الوصول بتاعته (`combo` down→move→wait→up مع fallback إلى `drag`) — لأن سحب خدمة الوصول بتاعته مجرَّب وشغال على الجهاز.
+- الإعدادات: رابط السيرفر (افتراضي `https://device-relay.cracknew37.workers.dev`)، توكن الجهاز `dr_...`، Device ID،
+  زر «اختبار الاتصال» (يجيب الأجهزة ويكمل الـ ID تلقائيًا) و«سحب تجريبي».
+- الحلقة: capture → parse → (اختياري: مراجعة القطع ✓) → plan → لكل قطعة: drag عبر Relay → capture → التحقق من النزول
+  → معايرة الإزاحة تلقائيًا لو نزلت مزحزحة بخانة.
+- REST المستخدم: `GET /api/devices/:id`, `POST /api/devices/:id/command {"action":{"type":"combo","combo":[...]},"wait":true}`.

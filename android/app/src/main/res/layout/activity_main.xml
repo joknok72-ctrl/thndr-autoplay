@@ -15,8 +15,22 @@
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2) طريقة اللعب" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <RadioGroup android:id="@+id/rgMode" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
         <RadioButton android:id="@+id/modeGuide" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🧭 المرشد (موصى به): إنت تسحب، هو يوريك فوق اللعبة بالظبط فين تحط كل قطعة — واحدة واحدة"/>
-        <RadioButton android:id="@+id/modeAuto" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🤖 البوت التلقائي: يسحب القطع لوحده (يحتاج خدمة الوصول، وقد لا يعمل مع كل الأجهزة)"/>
+        <RadioButton android:id="@+id/modeRelay" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🔗 البوت عبر Device Relay: يلعب لوحده بالكامل — السحب يتم من تطبيق Device Relay المثبّت على نفس الموبايل (موصى به للعب الآلي)"/>
+        <RadioButton android:id="@+id/modeAuto" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="🤖 البوت الداخلي: يسحب بخدمة الوصول بتاعة التطبيق (قد لا يعمل مع كل الأجهزة)"/>
     </RadioGroup>
+
+    <LinearLayout android:id="@+id/relayBox" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone" android:layout_marginTop="8dp" android:padding="12dp" android:background="#14345F">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="إعداد Device Relay" android:textColor="#FFA726" android:textStyle="bold"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="1) ثبّت تطبيق Device Relay على نفس الموبايل ووصّله بالسيرفر وفعّل خدمة الوصول بتاعته.\n2) من لوحة /setup انسخ توكن الجهاز (dr_...) ومعرّف الجهاز (Device ID) واكتبهم هنا." android:textColor="#CFE1F7" android:textSize="12sp" android:layout_marginTop="4dp"/>
+        <EditText android:id="@+id/edRelayServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="رابط السيرفر" android:textColor="#FFFFFF" android:textColorHint="#7F97B8" android:inputType="textUri" android:textDirection="ltr" android:textSize="13sp"/>
+        <EditText android:id="@+id/edRelayToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Bearer Token (dr_...)" android:textColor="#FFFFFF" android:textColorHint="#7F97B8" android:inputType="textVisiblePassword" android:textDirection="ltr" android:textSize="13sp"/>
+        <EditText android:id="@+id/edRelayDevice" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Device ID (مثال: my-phone)" android:textColor="#FFFFFF" android:textColorHint="#7F97B8" android:inputType="text" android:textDirection="ltr" android:textSize="13sp"/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/btnRelayTest" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="اختبار الاتصال"/>
+            <Button android:id="@+id/btnRelayDrag" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="سحب تجريبي" style="?attr/borderlessButtonStyle" android:textColor="#FFA726"/>
+        </LinearLayout>
+        <TextView android:id="@+id/stRelay" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:textSize="12sp"/>
+    </LinearLayout>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) الإعدادات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <CheckBox android:id="@+id/chkConfirm" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="مراجعة القطع قبل الخطة (افتراضي: إيقاف — الخطة تظهر فورًا)"/>
@@ -30,13 +44,16 @@
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="سرعة السحب" android:textColor="#CFE1F7" android:layout_marginTop="8dp"/>
     <SeekBar android:id="@+id/seekMove" android:layout_width="match_parent" android:layout_height="wrap_content"/>
     <TextView android:id="@+id/lblMove" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="مدة الضغط قبل السحب (لمسك القطعة)" android:textColor="#CFE1F7" android:layout_marginTop="8dp"/>
+    <SeekBar android:id="@+id/seekHold" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/lblHold" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
     </LinearLayout>
     <Button android:id="@+id/btnResetCal" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="تصفير المعايرة التلقائية" style="?attr/borderlessButtonStyle" android:textColor="#7F97B8" android:visibility="gone"/>
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="4) التشغيل" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="56dp" android:text="▶ ابدأ (تسجيل الشاشة + زر عائم)" android:backgroundTint="#059669"/>
     <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="■ إيقاف البوت" android:backgroundTint="#E53935"/>
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block واضغط الزر العائم ▶.\n\nلما القطع الثلاث تظهر اضغط «خطة ✦» → هيرسم على اللوحة أماكن القطع بأرقام 1-2-3 (الحالية بالأخضر) وتثبت الخطة ومش هتتغير. حط القطع براحتك بالترتيب واضغط «التالي» بعد كل قطعة (اختياري). لما القطع الجديدة تظهر اضغط «خطة» تاني." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block واضغط الزر العائم ▶.\n\nلما القطع الثلاث تظهر اضغط «خطة ✦» → هيرسم على اللوحة أماكن القطع بأرقام 1-2-3 (الحالية بالأخضر) وتثبت الخطة ومش هتتغير. حط القطع براحتك بالترتيب واضغط «التالي» بعد كل قطعة (اختياري). لما القطع الجديدة تظهر اضغط «خطة» تاني.\n\nفي وضع Device Relay: اضغط ▶ والبوت يقرأ اللوحة ويخطط ويسحب القطع بنفسه جولة ورا جولة ويتحقق من كل نزولة. لو فعّلت «مراجعة القطع» هيستنى موافقتك على رسم القطع قبل كل جولة." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
 
     <TextView android:id="@+id/stBot" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:fontFamily="monospace" android:layout_marginTop="12dp" android:layoutDirection="ltr" android:textDirection="ltr"/>
 </LinearLayout>

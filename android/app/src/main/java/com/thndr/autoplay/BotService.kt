@@ -112,11 +112,18 @@ class BotService : Service() {
     }
 
     private fun toggle() { if (running) stopLoop() else startLoop() }
-    private fun isAuto() = prefs.getInt("mode", 0) == 1   // 0 = guide (you drag, it shows where), 1 = auto (bot drags)
+    private fun isAuto() = prefs.getInt("mode", 0) == 1   // 0 = guide (you drag, it shows where), 1 = auto (bot drags), 2 = relay (Device Relay drags)
+    private fun isRelay() = prefs.getInt("mode", 0) == 2
+    private fun relay(): RelayClient? {
+        val tok = prefs.getString("relayToken", "")!!.trim(); val dev = prefs.getString("relayDevice", "")!!.trim()
+        if (tok.isBlank() || dev.isBlank()) return null
+        return RelayClient(prefs.getString("relayServer", RelayClient.DEFAULT_SERVER)!!, tok, dev)
+    }
 
     private fun startLoop() {
         if (projection == null) { report("لازم تسمح بتسجيل الشاشة أولاً"); return }
         if (isAuto() && !GestureService.isRunning) { report("فعّل خدمة الوصول (Accessibility) للتطبيق"); return }
+        if (isRelay() && relay() == null) { report("أدخل توكن Device Relay ومعرّف الجهاز في الإعدادات"); return }
         stopFlag = false; running = true; overlay?.setRunning(true)
         worker = HandlerThread("bot").also { it.start(); handler = Handler(it.looper) }
         handler?.post { loop() }
@@ -131,7 +138,7 @@ class BotService : Service() {
 
     // ---------- main loop ----------
     private var idleCount = 0
-    private fun loop() { if (isAuto()) autoLoop() else guideLoop() }
+    private fun loop() { when { isRelay() -> relayLoop(); isAuto() -> autoLoop(); else -> guideLoop() } }
 
     /**
      * Guide mode — fully manual pacing, NO automatic re-planning:
@@ -263,6 +270,141 @@ class BotService : Service() {
         val hz = when { cc < 3 -> "اليسار"; cc < 6 -> "الوسط"; else -> "اليمين" }
         val zone = if (v == "وسط" && hz == "الوسط") "قلب اللوحة" else "$v $hz"
         return "$zone (صف ${r + 1}، عمود ${c + 1})"
+    }
+
+    // ---------- Device Relay mode ----------
+    /**
+     * Fully autonomous play through the Device Relay app (its AccessibilityService performs the drags,
+     * which is proven to work on the user's phone, while this app keeps doing the vision + AI):
+     *  capture (MediaProjection) → parse board/tray → [optional: user approves the read pieces] →
+     *  AI plan for the round → for each piece: drag via relay → capture → verify landing → calibrate offsets.
+     */
+    private fun relayLoop() {
+        val rc = relay() ?: run { report("أدخل توكن Device Relay ومعرّف الجهاز"); running = false; overlay?.setRunning(false); return }
+        guide?.setMessage("بتأكد من اتصال Device Relay…"); report("بتأكد من الاتصال…")
+        val (on, detail) = rc.online()
+        if (!on) { report(detail); guide?.setMessage("❌ $detail"); Thread.sleep(2500); running = false; overlay?.setRunning(false); guide?.clear(); return }
+        report(detail); guide?.flash("Device Relay $detail — البوت هيلعب لوحده")
+        val holdMs = prefs.getInt("holdMs", 220).toLong(); val moveMs = prefs.getInt("moveMs", 420).toLong(); val settleMs = 260L
+        var lastSig = ""; var stuck = 0; var failures = 0
+        while (!stopFlag) {
+            try {
+                val scr = cleanCapture() ?: run { report("مش شايف اللوحة — افتح اللعبة"); guide?.setMessage("مش شايف اللوحة — افتح لعبة THNDR"); Thread.sleep(900); null } ?: continue
+                lastBoard = scr.boardString()
+                if (scr.piecesFound == 0) {
+                    idleCount++
+                    val m = if (idleCount > 8) "مافيش قطع — انتهت الجولة/اللعبة؟ (بستنى)" else "بانتظار القطع…"
+                    report(m); guide?.setMessage(m); Thread.sleep(700); continue
+                }
+                idleCount = 0
+                val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
+                if (sig == lastSig) { stuck++; if (stuck >= 2) { report("الشاشة ما اتغيرتش بعد السحب — بعدل الإزاحة"); nudge(0f, -scr.pitch * 0.35f); stuck = 0 } } else stuck = 0
+                lastSig = sig
+
+                // ---- optional approval of the read pieces ("I only approve the drawing") ----
+                var pieces: List<com.thndr.autoplay.engine.Piece?> = scr.tray.map { it?.piece }
+                if (prefs.getBoolean("confirmPieces", false)) {
+                    confirmedPieces = null; pendingScreen = scr
+                    val xs = FloatArray(3) { i -> scr.tray.getOrNull(i)?.cx ?: ((i + 0.5f) * scr.width / 3f) }
+                    val trayTop = scr.tray.filterNotNull().minOfOrNull { it.y0.toFloat() } ?: (scr.by1 + scr.pitch * 3.2f)
+                    editor?.setAnchors(xs, trayTop); editor?.show(pieces)
+                    guide?.setMessage("راجع القطع الثلاث ثم ✓ — البوت هيسحبهم لوحده"); report("بانتظار موافقتك على القطع")
+                    while (!stopFlag && confirmedPieces == null && pendingScreen != null) Thread.sleep(80)
+                    if (stopFlag) break
+                    val ok = confirmedPieces
+                    if (ok == null) { guide?.setMessage("تم الإلغاء — بقرأ الشاشة تاني"); Thread.sleep(600); continue }
+                    pieces = ok; confirmedPieces = null; pendingScreen = null
+                }
+
+                // ---- plan the whole round ----
+                report("بفكر… (${pieces.count { it != null }} قطع)"); guide?.setMessage("بفكر…")
+                val plan = AI.plan(scr.board, scr.bonus, pieces, 0, 1, prefs.getInt("level", 4))
+                if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); Thread.sleep(2000); continue }
+                val slotW = scr.width / 3f
+                val steps = plan.moves.map { m ->
+                    val tp = scr.tray.getOrNull(m.slot)
+                    val rect = if (tp != null) RectF(tp.x0.toFloat(), tp.y0.toFloat(), tp.x1.toFloat(), tp.y1.toFloat())
+                               else RectF(m.slot * slotW + slotW * 0.2f, scr.by1 + scr.pitch * 3.2f, (m.slot + 1) * slotW - slotW * 0.2f, scr.by1 + scr.pitch * 5.2f)
+                    GuideOverlay.Step(pieces[m.slot]!!, rect, m.slot, m.r, m.c, m.points)
+                }
+
+                // ---- execute move by move, verifying each landing ----
+                var board = scr.board.copyOf(); var bonus = scr.bonus.copyOf(); var mult = 1
+                var roundOk = true
+                for ((i, m) in plan.moves.withIndex()) {
+                    if (stopFlag) break
+                    val piece = pieces[m.slot]!!
+                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, steps, i, "${i + 1}  ←  البوت يسحب", "+${m.points}"))
+                    // freshest tray position for this slot (pieces keep their slots, but re-read to be safe)
+                    val tp = scr.tray.getOrNull(m.slot) ?: run { roundOk = false; null } ?: break
+                    val gx = tp.cx; val gy = tp.cy
+                    val cx = scr.bx0 + (m.c + piece.w / 2f) * scr.pitch
+                    val cy = scr.by0 + (m.r + piece.h / 2f) * scr.pitch
+                    val offX = prefs.getFloat("offX", 0f); val offY = prefs.getFloat("offY", -scr.pitch * 0.9f)
+                    Thread.sleep(80)
+                    overlay?.setHiddenForCapture(false)
+                    val r = rc.drag(gx, gy, cx + offX, cy + offY, holdMs, moveMs, settleMs)
+                    if (!r.ok) {
+                        failures++
+                        report("السحب فشل عبر Relay: ${r.error}"); guide?.setMessage("❌ السحب فشل: ${r.error}")
+                        if (failures >= 3) { val (o, d) = rc.online(); if (!o) { guide?.setMessage("❌ $d"); Thread.sleep(3000) } ; failures = 0 }
+                        roundOk = false; Thread.sleep(700); break
+                    }
+                    failures = 0
+                    Thread.sleep(prefs.getInt("delay", 650).toLong())
+                    // verify
+                    val expect = Engine.place(board, bonus, piece, m.r, m.c)
+                    val after = cleanCapture()
+                    if (after == null) { roundOk = false; break }
+                    if (landedAt(board, after.board, piece, m.r, m.c)) {
+                        movesDone++
+                        report("✅ حركة #$movesDone: قطعة ${m.slot + 1} → (${m.r + 1},${m.c + 1}) +${m.points}")
+                        prefs.edit().putBoolean("calibrated", true).apply()
+                        board = expect.board; bonus = expect.bonus; if (expect.orangeCleared > 0) mult++
+                    } else {
+                        // where did it land? adjust the finger offset by whole cells and re-plan from the real screen
+                        val shift = findShift(board, after.board, piece, m.r, m.c)
+                        if (shift == null) {
+                            report("القطعة ما نزلتش — بعدل الإزاحة وبعيد"); nudge(0f, -scr.pitch * 0.3f)
+                        } else {
+                            nudge(-shift.second * scr.pitch, -shift.first * scr.pitch)
+                            report("نزلت مزحزحة (${shift.first},${shift.second}) — عدّلت المعايرة")
+                        }
+                        roundOk = false; break
+                    }
+                }
+                guide?.clear()
+                if (roundOk) { vibrate(longArrayOf(0, 25)); Thread.sleep(350) }
+            } catch (e: Throwable) {
+                Log.e(TAG, "relay loop error", e); report("خطأ: ${e.message}"); Thread.sleep(900)
+            }
+        }
+        editor?.hide(); guide?.clear()
+    }
+
+    /** Hide our overlays, grab the freshest frame, parse it. Null when the board is not visible. */
+    private fun cleanCapture(): Screen? {
+        guide?.clear(); overlay?.setHiddenForCapture(true)
+        Thread.sleep(220)
+        var bmp = capture(); Thread.sleep(50); bmp = capture() ?: bmp
+        overlay?.setHiddenForCapture(false)
+        return try { bmp?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
+    }
+
+    /** (dr,dc) shift with which the piece actually landed, or null if it did not land near the target. */
+    private fun findShift(before: IntArray, after: IntArray, p: com.thndr.autoplay.engine.Piece, r: Int, c: Int): Pair<Int, Int>? {
+        var best: Pair<Int, Int>? = null; var bestHit = -1
+        for (dr in -3..3) for (dc in -3..3) {
+            var hit = 0; var okAll = true
+            for (cell in p.cells) {
+                val rr = r + cell.r + dr; val cc = c + cell.c + dc
+                if (rr !in 0 until N || cc !in 0 until N) { okAll = false; break }
+                val i = rr * N + cc
+                if (after[i] != 0 && before[i] == 0) hit++
+            }
+            if (okAll && hit > bestHit) { bestHit = hit; best = dr to dc }
+        }
+        return if (bestHit >= p.size - 1 && best != null && (best.first != 0 || best.second != 0)) best else null
     }
 
     /** Auto mode: the bot drags the pieces itself via the accessibility service. */
