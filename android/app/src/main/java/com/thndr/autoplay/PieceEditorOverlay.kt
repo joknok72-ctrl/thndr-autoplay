@@ -34,6 +34,10 @@ class PieceEditorOverlay(ctx: Context, private val onConfirm: (List<Piece?>) -> 
     private val pBadge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val pBadgeTxt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(10, 44, 87); textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
 
+    private var anchorX = floatArrayOf(-1f, -1f, -1f); private var anchorTop = -1f
+    /** Optional: place each mini grid right above its tray piece (fast visual comparison). */
+    fun setAnchors(xs: FloatArray, trayTop: Float) { anchorX = xs; anchorTop = trayTop }
+
     fun show(pieces: List<Piece?>) {
         for (i in 0 until 3) {
             grids[i].fill(0)
@@ -49,51 +53,77 @@ class PieceEditorOverlay(ctx: Context, private val onConfirm: (List<Piece?>) -> 
     private fun layoutMetrics() {
         val d = resources.displayMetrics.density
         val w = width.toFloat()
-        cellPx = minOf((w - 48 * d) / 3f / G, 30 * d)
+        val anchored = anchorTop > 0 && anchorX.all { it > 0 }
+        cellPx = if (anchored) minOf(w / 3f / (G + 1.2f), 22 * d) else minOf((w - 48 * d) / 3f / G, 30 * d)
         val gw = cellPx * G
-        val gapX = (w - 3 * gw) / 4f
-        for (i in 0 until 3) gridLeft[i] = gapX + i * (gw + gapX)
-        val panelH = 84 * d + gw + 60 * d + 64 * d
-        panelTop = height - panelH - 24 * d
-        gridTop = panelTop + 84 * d
-        val by = gridTop + gw + 12 * d
-        for (i in 0 until 3) btnClear[i] = RectF(gridLeft[i], by, gridLeft[i] + gw, by + 36 * d)
-        val bty = by + 48 * d
-        btnCancel = RectF(16 * d, bty, w / 2 - 6 * d, bty + 52 * d)
-        btnOk = RectF(w / 2 + 6 * d, bty, w - 16 * d, bty + 52 * d)
+        if (anchored) {
+            val loc = IntArray(2); getLocationOnScreen(loc)
+            for (i in 0 until 3) gridLeft[i] = (anchorX[i] - gw / 2).coerceIn(4 * d, w - gw - 4 * d)
+            gridTop = anchorTop - loc[1] - gw - 14 * d
+            panelTop = gridTop - 40 * d
+            val by = anchorTop - loc[1] + 6 * d      // clear buttons under the real pieces? no — keep above: put small "x" at grid corner
+            for (i in 0 until 3) btnClear[i] = RectF(gridLeft[i] + gw - 14 * d, gridTop - 14 * d, gridLeft[i] + gw + 8 * d, gridTop + 8 * d)
+            btnOk = RectF(w / 2 - 70 * d, panelTop - 46 * d, w / 2 + 70 * d, panelTop - 4 * d)
+            btnCancel = RectF(w - 52 * d, panelTop - 46 * d, w - 8 * d, panelTop - 4 * d)
+        } else {
+            val gapX = (w - 3 * gw) / 4f
+            for (i in 0 until 3) gridLeft[i] = gapX + i * (gw + gapX)
+            val panelH = 84 * d + gw + 60 * d + 64 * d
+            panelTop = height - panelH - 24 * d
+            gridTop = panelTop + 84 * d
+            val by = gridTop + gw + 12 * d
+            for (i in 0 until 3) btnClear[i] = RectF(gridLeft[i], by, gridLeft[i] + gw, by + 36 * d)
+            val bty = by + 48 * d
+            btnCancel = RectF(16 * d, bty, w / 2 - 6 * d, bty + 52 * d)
+            btnOk = RectF(w / 2 + 6 * d, bty, w - 16 * d, bty + 52 * d)
+        }
     }
 
     override fun onDraw(cv: Canvas) {
         val d = resources.displayMetrics.density
         layoutMetrics()
-        cv.drawRect(0f, 0f, width.toFloat(), height.toFloat(), pDim)
-        cv.drawRoundRect(RectF(8 * d, panelTop, width - 8 * d, height - 12 * d), 22 * d, 22 * d, pPanel)
-        pTxt.textSize = 18 * d
-        cv.drawText("هل القطع دي مطابقة للي في اللعبة؟", width / 2f, panelTop + 30 * d, pTxt)
-        pSub.textSize = 13 * d
-        cv.drawText("اضغط أي مربع لتعديله: فاضي ← أزرق ← أصفر", width / 2f, panelTop + 54 * d, pSub)
-        cv.drawText("(هيتم التخطيط بالأشكال دي بالظبط)", width / 2f, panelTop + 72 * d, pSub)
+        val anchored = anchorTop > 0 && anchorX.all { it > 0 }
+        val gw = cellPx * G
+        if (!anchored) {
+            cv.drawRect(0f, 0f, width.toFloat(), height.toFloat(), pDim)
+            cv.drawRoundRect(RectF(8 * d, panelTop, width - 8 * d, height - 12 * d), 22 * d, 22 * d, pPanel)
+            pTxt.textSize = 18 * d
+            cv.drawText("هل القطع دي مطابقة للي في اللعبة؟", width / 2f, panelTop + 30 * d, pTxt)
+            pSub.textSize = 13 * d
+            cv.drawText("اضغط أي مربع لتعديله: فاضي ← أزرق ← أصفر", width / 2f, panelTop + 54 * d, pSub)
+            cv.drawText("(هيتم التخطيط بالأشكال دي بالظبط)", width / 2f, panelTop + 72 * d, pSub)
+        } else {
+            // compact: a small hint pill + OK / cancel
+            cv.drawRoundRect(RectF(gridLeft.minOrNull()!! - 6 * d, gridTop - 6 * d, gridLeft.maxOrNull()!! + gw + 6 * d, gridTop + gw + 6 * d), 10 * d, 10 * d, pPanel)
+            pSub.textSize = 12 * d
+            cv.drawText("قارن بالعين ↓ — اضغط مربع لتصليحه", width / 2f, panelTop - 52 * d, pSub)
+        }
         for (i in 0 until 3) {
             val gx = gridLeft[i]
             for (r in 0 until G) for (c in 0 until G) {
                 val x = gx + c * cellPx; val y = gridTop + r * cellPx
-                val rf = RectF(x + 1.5f * d, y + 1.5f * d, x + cellPx - 1.5f * d, y + cellPx - 1.5f * d)
+                val rf = RectF(x + 1.2f * d, y + 1.2f * d, x + cellPx - 1.2f * d, y + cellPx - 1.2f * d)
                 val v = grids[i][r * G + c]
-                cv.drawRoundRect(rf, 4 * d, 4 * d, when (v) { 1 -> pBlue; 2 -> pOrange; else -> pCell })
+                cv.drawRoundRect(rf, 3 * d, 3 * d, when (v) { 1 -> pBlue; 2 -> pOrange; else -> pCell })
                 if (v != 0) {
                     cv.drawRoundRect(RectF(rf.left + rf.width() * 0.2f, rf.top + rf.height() * 0.2f, rf.left + rf.width() * 0.36f, rf.top + rf.height() * 0.3f), 2f, 2f, pShine)
                     cv.drawRoundRect(RectF(rf.left + rf.width() * 0.44f, rf.top + rf.height() * 0.2f, rf.left + rf.width() * 0.6f, rf.top + rf.height() * 0.3f), 2f, 2f, pShine)
                 }
             }
-            cv.drawCircle(gx + 2 * d, gridTop + 2 * d, 12 * d, pBadge); pBadgeTxt.textSize = 13 * d
-            cv.drawText("${i + 1}", gx + 2 * d, gridTop + 6.5f * d, pBadgeTxt)
-            cv.drawRoundRect(btnClear[i], 10 * d, 10 * d, pCancel); pTxt.textSize = 13 * d
-            cv.drawText(if (grids[i].any { it != 0 }) "مسح" else "فاضية", btnClear[i].centerX(), btnClear[i].centerY() + 5 * d, pTxt)
+            cv.drawCircle(gx + 2 * d, gridTop + 2 * d, 10 * d, pBadge); pBadgeTxt.textSize = 12 * d
+            cv.drawText("${i + 1}", gx + 2 * d, gridTop + 6f * d, pBadgeTxt)
+            if (!anchored) {
+                cv.drawRoundRect(btnClear[i], 10 * d, 10 * d, pCancel); pTxt.textSize = 13 * d
+                cv.drawText(if (grids[i].any { it != 0 }) "مسح" else "فاضية", btnClear[i].centerX(), btnClear[i].centerY() + 5 * d, pTxt)
+            } else {
+                cv.drawCircle(btnClear[i].centerX(), btnClear[i].centerY(), 9 * d, pCancel); pTxt.textSize = 11 * d
+                cv.drawText("×", btnClear[i].centerX(), btnClear[i].centerY() + 4 * d, pTxt)
+            }
         }
         cv.drawRoundRect(btnCancel, 14 * d, 14 * d, pCancel); cv.drawRoundRect(btnOk, 14 * d, 14 * d, pOk)
         pTxt.textSize = 16 * d
-        cv.drawText("إلغاء", btnCancel.centerX(), btnCancel.centerY() + 6 * d, pTxt)
-        cv.drawText("✓ تمام — اعمل الخطة", btnOk.centerX(), btnOk.centerY() + 6 * d, pTxt)
+        cv.drawText(if (anchored) "✕" else "إلغاء", btnCancel.centerX(), btnCancel.centerY() + 6 * d, pTxt)
+        cv.drawText(if (anchored) "✓ تمام" else "✓ تمام — اعمل الخطة", btnOk.centerX(), btnOk.centerY() + 6 * d, pTxt)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

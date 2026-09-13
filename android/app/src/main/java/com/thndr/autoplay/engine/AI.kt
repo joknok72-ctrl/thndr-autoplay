@@ -81,8 +81,17 @@ object AI {
             }
             if (size <= 2) islands++
         }
+        // Bonus cells (50..2K) pay out when their row/col/box is CLEARED — and they vanish once covered.
+        // Reward boards where the lines through a bonus cell are close to completion (cell itself still empty),
+        // scaled by the value. This makes the AI actively build toward clearing them.
         var bonusPot = 0.0
-        for (i in 0 until N * N) if (bonus[i] != 0) { val r = i / N; val c = i % N; bonusPot += bonus[i] * (maxOf(rf[r], cf[c]) / N.toDouble()) * 0.02 }
+        for (i in 0 until N * N) if (bonus[i] != 0 && board[i] == 0) {
+            val r = i / N; val c = i % N; val br = (r / 3) * 3; val bc = (c / 3) * 3; var bf = 0
+            for (rr in br until br + 3) for (cc in bc until bc + 3) if (board[Engine.idx(rr, cc)] != 0) bf++
+            val prog = maxOf(rf[r], cf[c], bf) / 8.0          // 8 = all other cells filled, ready to complete
+            val v = Math.log10(bonus[i].toDouble()) - 1.0      // 50 -> 0.7, 150 -> 1.18, 1K -> 2, 2K -> 2.3
+            bonusPot += v * (4.0 + 14.0 * prog * prog)
+        }
         return empty * W_EMPTY - holes * W_HOLES - trans * W_TRANS + nearFull * W_NEAR + edge * W_EDGE + fit * W_FIT - islands * W_ISL + bonusPot + sq3 * W_SQ3 - dead * W_DEAD
     }
 
@@ -106,7 +115,8 @@ object AI {
                     val pts = node.pts + sc.points
                     // combo bonus: clearing 2+ lines/boxes in one drop is worth extra (streak & multiplier synergy)
                     val combo = if (sc.lines >= 2) 25.0 * (sc.lines - 1) else 0.0
-                    val heur = evaluate(res.board, res.bonus, cfg) + (sc.mult - node.mult) * W_MULT + combo
+                    val bonusHit = res.bonusHit * 0.35 * node.mult                    // collecting a bonus cell is a priority
+                    val heur = evaluate(res.board, res.bonus, cfg) + (sc.mult - node.mult) * W_MULT + combo + bonusHit
                     next.add(Node(res.board, res.bonus, sc.streak, sc.mult, pts, pts * W_PTS + heur, node.moves + Move(slot, rc[0], rc[1], sc.points, sc.lines)))
                 }
                 if (next.isEmpty()) { beam = emptyList(); break }

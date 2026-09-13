@@ -165,6 +165,9 @@ class BotService : Service() {
                     pendingScreen = scr
                     if (prefs.getBoolean("confirmPieces", false)) {
                         guide?.setMessage("راجع القطع الثلاث وعدّلها لو فيه غلط، ثم ✓"); report("راجع القطع ثم ✓")
+                        val xs = FloatArray(3) { i -> scr.tray.getOrNull(i)?.cx ?: ((i + 0.5f) * scr.width / 3f) }
+                        val trayTop = scr.tray.filterNotNull().minOfOrNull { it.y0.toFloat() } ?: (scr.by1 + scr.pitch * 3.2f)
+                        editor?.setAnchors(xs, trayTop)
                         editor?.show(scr.tray.map { it?.piece })
                     } else {
                         confirmedPieces = scr.tray.map { it?.piece }   // trust the reading, go straight to the plan

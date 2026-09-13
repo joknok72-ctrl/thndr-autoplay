@@ -53,6 +53,27 @@ object ScreenParser {
         return m.maxByOrNull { it.value }?.key ?: 0
     }
 
+    /**
+     * Bonus text is light, low-saturation glyphs on an empty cell. We count glyph columns in the cell:
+     *  "50" -> 2 glyphs, "150"/"300"/"500" -> 3 glyphs (150 is the most common), "1K"/"2K" -> 2 glyphs but narrower total.
+     * The exact value matters less than "how big" — the AI just needs the ranking.
+     */
+    private fun estimateBonus(px: IntArray, W: Int, H: Int, cx: Int, cy: Int, pitch: Float, cellBg: Int, cellLum: Int): Int {
+        val k = (pitch * 0.44f).toInt()
+        val x0 = maxOf(0, cx - k); val x1 = minOf(W - 1, cx + k); val y0 = maxOf(0, cy - k); val y1 = minOf(H - 1, cy + k)
+        val colP = IntArray(x1 - x0 + 1); var total = 0
+        for (y in y0..y1) for (x in x0..x1) { val p = px[y * W + x]; if (mx(p) > cellLum + 50 && sat(p) < 90 && dist(p, cellBg) > 90) { colP[x - x0]++; total++ } }
+        var runs = 0; var on = false; var width = 0; var first = -1; var last = -1
+        for (i in colP.indices) { val v = colP[i] > 0; if (v) { if (first < 0) first = i; last = i; width++ }; if (v && !on) runs++; on = v }
+        if (total < 6) return 50
+        val span = if (first >= 0) (last - first + 1) / pitch else 0f
+        return when {
+            runs >= 3 -> if (span > 0.62f) 300 else 150     // 3 digits
+            span < 0.36f -> 1000                              // "1K" is narrow (thin 1 + K)
+            else -> 50
+        }
+    }
+
     fun parse(bmp: Bitmap): Screen {
         val W = bmp.width; val H = bmp.height
         val px = IntArray(W * H); bmp.getPixels(px, 0, W, 0, 0, W, H)
@@ -126,7 +147,7 @@ object ScreenParser {
             }
             val idx = i * N + j
             if (nBlock > 0.3 * tot) board[idx] = if (nHue > 0 && nSpecial > nHue / 2) 2 else 1
-            else if (nText > 0.02 * tot) bonus[idx] = 50
+            else if (nText > 0.02 * tot) bonus[idx] = estimateBonus(px, W, H, cx, cy, pitch, cellBg, cellLum)
         }
 
         // ---- 6) tray: read pieces as a GRID of cubes (like drawing them), not by splitting blobs ----
