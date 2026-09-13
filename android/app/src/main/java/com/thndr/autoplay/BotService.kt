@@ -21,6 +21,7 @@ import com.thndr.autoplay.engine.Engine
 import com.thndr.autoplay.engine.N
 import com.thndr.autoplay.vision.Screen
 import com.thndr.autoplay.vision.ScreenParser
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -285,7 +286,7 @@ class BotService : Service() {
         val (on, detail) = rc.online()
         if (!on) { report(detail); guide?.setMessage("❌ $detail"); Thread.sleep(2500); running = false; overlay?.setRunning(false); guide?.clear(); return }
         report(detail); guide?.flash("Device Relay $detail — البوت هيلعب لوحده")
-        val holdMs = prefs.getInt("holdMs", 220).toLong(); val moveMs = prefs.getInt("moveMs", 420).toLong(); val settleMs = 260L
+        rc.releaseAll()   // no finger left down from a previous run
         var lastSig = ""; var stuck = 0; var failures = 0
         while (!stopFlag) {
             try {
@@ -298,7 +299,7 @@ class BotService : Service() {
                 }
                 idleCount = 0
                 val sig = lastBoard + scr.tray.joinToString { it?.piece?.toString() ?: "-" }
-                if (sig == lastSig) { stuck++; if (stuck >= 2) { report("الشاشة ما اتغيرتش بعد السحب — بعدل الإزاحة"); nudge(0f, -scr.pitch * 0.35f); stuck = 0 } } else stuck = 0
+                if (sig == lastSig) { stuck++; if (stuck >= 3) { report("الشاشة ما بتتغيرش — بصفّر المعايرة وبعيد"); prefs.edit().remove("offX").remove("offY").apply(); stuck = 0 } } else stuck = 0
                 lastSig = sig
 
                 // ---- optional approval of the read pieces ("I only approve the drawing") ----
@@ -334,42 +335,33 @@ class BotService : Service() {
                 for ((i, m) in plan.moves.withIndex()) {
                     if (stopFlag) break
                     val piece = pieces[m.slot]!!
-                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, steps, i, "${i + 1}  ←  البوت يسحب", "+${m.points}"))
+                    guide?.setPlan(GuideOverlay.PlanView(scr.bx0.toFloat(), scr.by0.toFloat(), scr.pitch, steps, i, "${i + 1}  ←  بتطير لمكانها ✨", "+${m.points}"))
+                    Thread.sleep(150)
                     // freshest tray position for this slot (pieces keep their slots, but re-read to be safe)
                     val tp = scr.tray.getOrNull(m.slot) ?: run { roundOk = false; null } ?: break
-                    val gx = tp.cx; val gy = tp.cy
-                    val cx = scr.bx0 + (m.c + piece.w / 2f) * scr.pitch
-                    val cy = scr.by0 + (m.r + piece.h / 2f) * scr.pitch
-                    val offX = prefs.getFloat("offX", 0f); val offY = prefs.getFloat("offY", -scr.pitch * 0.9f)
-                    Thread.sleep(80)
-                    overlay?.setHiddenForCapture(false)
-                    val r = rc.drag(gx, gy, cx + offX, cy + offY, holdMs, moveMs, settleMs)
-                    if (!r.ok) {
+                    // baseline frame (board without the flying piece) for the snap detector
+                    val base = captureClean() ?: run { roundOk = false; null } ?: break
+                    val r = magicSnap(rc, scr, base, tp, piece, m.r, m.c)
+                    if (!r.first) {
                         failures++
-                        report("السحب فشل عبر Relay: ${r.error}"); guide?.setMessage("❌ السحب فشل: ${r.error}")
+                        report("النقل فشل: ${r.second}"); guide?.setMessage("❌ ${r.second}")
                         if (failures >= 3) { val (o, d) = rc.online(); if (!o) { guide?.setMessage("❌ $d"); Thread.sleep(3000) } ; failures = 0 }
-                        roundOk = false; Thread.sleep(700); break
+                        roundOk = false; Thread.sleep(500); break
                     }
                     failures = 0
-                    Thread.sleep(prefs.getInt("delay", 650).toLong())
-                    // verify
+                    // verify (wait until the game's animation settled instead of a fixed delay)
                     val expect = Engine.place(board, bonus, piece, m.r, m.c)
-                    val after = cleanCapture()
+                    val after = waitSettled()
                     if (after == null) { roundOk = false; break }
                     if (landedAt(board, after.board, piece, m.r, m.c)) {
                         movesDone++
-                        report("✅ حركة #$movesDone: قطعة ${m.slot + 1} → (${m.r + 1},${m.c + 1}) +${m.points}")
-                        prefs.edit().putBoolean("calibrated", true).apply()
+                        report("✅ #$movesDone: قطعة ${m.slot + 1} → (${m.r + 1},${m.c + 1}) +${m.points} — ${r.second}")
                         board = expect.board; bonus = expect.bonus; if (expect.orangeCleared > 0) mult++
                     } else {
-                        // where did it land? adjust the finger offset by whole cells and re-plan from the real screen
+                        // landed elsewhere? (should be rare with the closed loop) — correct the remembered offset and re-plan from the real screen
                         val shift = findShift(board, after.board, piece, m.r, m.c)
-                        if (shift == null) {
-                            report("القطعة ما نزلتش — بعدل الإزاحة وبعيد"); nudge(0f, -scr.pitch * 0.3f)
-                        } else {
-                            nudge(-shift.second * scr.pitch, -shift.first * scr.pitch)
-                            report("نزلت مزحزحة (${shift.first},${shift.second}) — عدّلت المعايرة")
-                        }
+                        if (shift == null) { report("القطعة ما نزلتش — بعيد من الشاشة الحقيقية") }
+                        else { nudge(-shift.second * scr.pitch, -shift.first * scr.pitch); report("نزلت مزحزحة (${shift.first},${shift.second}) — عدّلت المعايرة") }
                         roundOk = false; break
                     }
                 }
@@ -379,7 +371,125 @@ class BotService : Service() {
                 Log.e(TAG, "relay loop error", e); report("خطأ: ${e.message}"); Thread.sleep(900)
             }
         }
+        rc.releaseAll()
         editor?.hide(); guide?.clear()
+    }
+
+    // ---------- "magic snap": closed-loop placement with a held finger ----------
+    /**
+     * The piece "flies" to its cell by itself:
+     *  1) one combo: press the tray piece, lift it a bit (the game enlarges it), glide to where the target SHOULD be and
+     *     keep the finger DOWN (persistent finger 0 in Device Relay).
+     *  2) capture the frame, find the flying piece (new saturated cube pixels vs the baseline frame), measure its exact
+     *     center vs the target cells' center → move the held finger by the difference (sub-cell precision).
+     *  3) repeat until the error is < 12% of a cell (usually 0–1 corrections), then release. The measured finger offset is
+     *     remembered, so the next pieces land exactly on the first try.
+     * Returns (ok, message).
+     */
+    private fun magicSnap(rc: RelayClient, scr: Screen, base: Bitmap, tp: com.thndr.autoplay.vision.TrayPiece, piece: com.thndr.autoplay.engine.Piece, r: Int, c: Int): Pair<Boolean, String> {
+        val pitch = scr.pitch
+        val tx = scr.bx0 + (c + piece.w / 2f) * pitch           // desired center of the piece on the board
+        val ty = scr.by0 + (r + piece.h / 2f) * pitch
+        val offX = prefs.getFloat("offX", 0f); val offY = prefs.getFloat("offY", -pitch * 0.9f)
+        var fx = tx + offX; var fy = ty + offY                   // finger position
+        overlay?.setHiddenForCapture(true); guide?.clear()
+        try {
+            val l = rc.lift(tp.cx, tp.cy, fx, fy, pitch * 0.6f)
+            if (!l.ok) { rc.releaseAll(); return false to "مسك القطعة فشل: ${l.error}" }
+            var lastErr = Float.MAX_VALUE; var corrections = 0
+            for (iter in 0 until 5) {
+                Thread.sleep(if (iter == 0) 140 else 90)
+                val frame = capture() ?: return false to "تصوير الشاشة فشل".also { rc.releaseAll() }
+                val fp = locateFlying(base, frame, scr, piece)
+                if (fp == null) {
+                    if (iter == 0) { Thread.sleep(150); continue }   // the pick-up animation may still be running
+                    rc.releaseAll(); return false to "مش شايف القطعة وهي طايرة — بعيد"
+                }
+                val dx = tx - fp.first; val dy = ty - fp.second
+                val err = maxOf(abs(dx), abs(dy))
+                Log.i(TAG, "snap iter=$iter err=${"%.1f".format(err)} px (dx=${"%.0f".format(dx)}, dy=${"%.0f".format(dy)}) scale=${"%.2f".format(fp.third)}")
+                if (err <= pitch * 0.12f) break
+                if (err > lastErr * 1.5f && iter > 1) break          // not converging — don't oscillate
+                lastErr = err
+                // the flying piece may be drawn at a different scale than the board — but it moves 1:1 with the finger
+                fx += dx; fy += dy; corrections++
+                val mv = rc.fingerMove(fx, fy, 110)
+                if (!mv.ok) { rc.releaseAll(); return false to "تحريك الإصبع فشل: ${mv.error}" }
+            }
+            // remember the calibrated finger offset (so the next pieces need no correction at all)
+            prefs.edit().putFloat("offX", fx - tx).putFloat("offY", fy - ty).putBoolean("calibrated", true).apply()
+            val up = rc.fingerUp()
+            if (!up.ok) rc.releaseAll()
+            return true to (if (corrections == 0) "نزلت بالملي من أول مرة" else "نزلت بالملي بعد $corrections تعديل")
+        } finally { overlay?.setHiddenForCapture(false) }
+    }
+
+    /**
+     * Locate the piece being dragged: cube-colored pixels present in `frame` but not in `base` (the freshly vacated tray
+     * slot is background now, so it never counts). Uses robust row/column projections to get the bounding box, then
+     * returns (centerX, centerY, scale) or null when nothing piece-sized is visible.
+     */
+    private fun isCube(p: Int): Boolean {
+        val r = (p shr 16) and 255; val g = (p shr 8) and 255; val b = p and 255
+        val mx = maxOf(r, g, b); val mn = minOf(r, g, b)
+        return mx - mn >= 100 && mx >= 170
+    }
+    private fun locateFlying(base: Bitmap, frame: Bitmap, scr: Screen, piece: com.thndr.autoplay.engine.Piece): Triple<Float, Float, Float>? {
+        val W = frame.width; val H = frame.height
+        val step = 2
+        val margin = (scr.pitch * 2.5f).toInt()
+        val x0 = maxOf(0, scr.bx0 - margin); val x1 = minOf(W - 1, scr.bx1 + margin)
+        val y0 = maxOf(0, scr.by0 - margin); val y1 = minOf(H - 1, (scr.by1 + scr.pitch * 2.6f).toInt())  // exclude the tray itself
+        val rw = x1 - x0 + 1; val rh = y1 - y0 + 1
+        val fpx = IntArray(rw * rh); frame.getPixels(fpx, 0, rw, x0, y0, rw, rh)
+        val bpx = IntArray(rw * rh); base.getPixels(bpx, 0, rw, x0, y0, rw, rh)
+        val w = (rw - 1) / step + 1; val h = (rh - 1) / step + 1
+        val colP = IntArray(w); val rowP = IntArray(h)
+        var total = 0
+        for (yy in 0 until h) {
+            val off = (yy * step) * rw
+            for (xx in 0 until w) {
+                val i = off + xx * step
+                if (!isCube(fpx[i]) || isCube(bpx[i])) continue     // only NEW cube pixels vs. baseline
+                colP[xx]++; rowP[yy]++; total++
+            }
+        }
+        val cubeArea = (scr.pitch * scr.pitch) / (step * step)
+        if (total < cubeArea * 0.25f * piece.size) return null
+        // robust bbox: first/last row & col whose count exceeds 25% of one cube side
+        val thr = (scr.pitch * 0.25f / step).toInt().coerceAtLeast(2)
+        var cx0 = -1; var cx1 = -1; var cy0 = -1; var cy1 = -1
+        for (i in 0 until w) if (colP[i] > thr) { if (cx0 < 0) cx0 = i; cx1 = i }
+        for (i in 0 until h) if (rowP[i] > thr) { if (cy0 < 0) cy0 = i; cy1 = i }
+        if (cx0 < 0 || cy0 < 0) return null
+        val bw = (cx1 - cx0 + 1) * step.toFloat(); val bh = (cy1 - cy0 + 1) * step.toFloat()
+        val scaleX = bw / (piece.w * scr.pitch); val scaleY = bh / (piece.h * scr.pitch)
+        // must look like our piece (drawn between 70% and 130% of board scale, roughly square cubes)
+        if (scaleX < 0.6f || scaleX > 1.45f || scaleY < 0.6f || scaleY > 1.45f) return null
+        val cx = x0 + (cx0 + cx1 + 1) / 2f * step; val cy = y0 + (cy0 + cy1 + 1) / 2f * step
+        return Triple(cx, cy, (scaleX + scaleY) / 2f)
+    }
+
+    /** Capture with overlays hidden (no parsing). */
+    private fun captureClean(): Bitmap? {
+        guide?.clear(); overlay?.setHiddenForCapture(true)
+        Thread.sleep(200)
+        var bmp = capture(); Thread.sleep(40); bmp = capture() ?: bmp
+        overlay?.setHiddenForCapture(false)
+        return bmp
+    }
+
+    /** Wait until the game finished animating (two identical consecutive reads), max ~2.5 s. */
+    private fun waitSettled(): Screen? {
+        var prev: String? = null; var last: Screen? = null
+        val t0 = System.currentTimeMillis()
+        Thread.sleep(220)
+        while (System.currentTimeMillis() - t0 < 2500 && !stopFlag) {
+            val s = cleanCapture()
+            if (s != null) { val sig = s.boardString() + s.piecesFound; if (sig == prev) return s; prev = sig; last = s }
+            Thread.sleep(160)
+        }
+        return last
     }
 
     /** Hide our overlays, grab the freshest frame, parse it. Null when the board is not visible. */

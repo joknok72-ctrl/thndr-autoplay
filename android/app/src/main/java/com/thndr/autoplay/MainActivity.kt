@@ -44,7 +44,8 @@ class MainActivity : AppCompatActivity() {
         val relayBox = findViewById<android.view.View>(R.id.relayBox)
         fun refreshMode() {
             val m = prefs.getInt("mode", 0)
-            autoOnly.visibility = if (m != 0) android.view.View.VISIBLE else android.view.View.GONE; resetCal.visibility = autoOnly.visibility
+            // drag speed / animation delay / calibration only matter for the internal gesture bot; relay mode is closed-loop
+            autoOnly.visibility = if (m == 1) android.view.View.VISIBLE else android.view.View.GONE; resetCal.visibility = autoOnly.visibility
             relayBox.visibility = if (m == 2) android.view.View.VISIBLE else android.view.View.GONE
         }
         rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", when (id) { R.id.modeAuto -> 1; R.id.modeRelay -> 2; else -> 0 }).apply(); refreshMode() }
@@ -79,11 +80,11 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnRelayDrag).setOnClickListener {
             val rc = client() ?: return@setOnClickListener
-            stRelay.text = "⏳ بسحب من نص الشاشة لفوق… (لو الشاشة اتحركت يبقى السحب شغال)"
+            stRelay.text = "⏳ بلمس مكان فاضي في الشاشة عبر Device Relay…"
             val dm = resources.displayMetrics; val w = dm.widthPixels.toFloat(); val hgt = dm.heightPixels.toFloat()
             Thread {
-                val r = rc.drag(w / 2f, hgt * 0.7f, w / 2f, hgt * 0.35f, prefs.getInt("holdMs", 220).toLong(), prefs.getInt("moveMs", 420).toLong(), 250)
-                ui.post { stRelay.text = if (r.ok) "✅ السحب التجريبي نٌفّذ بنجاح عبر Device Relay" else "❌ فشل السحب: ${r.error}\nتأكد إن خدمة الوصول بتاعة Device Relay مفعّلة والتطبيق متصل" }
+                val r = rc.tap(w / 2f, hgt * 0.12f)
+                ui.post { stRelay.text = if (r.ok) "✅ خدمة الوصول بتاعة Device Relay شغالة — جاهز" else "❌ اللمسة فشلت: ${r.error}\nتأكد إن خدمة الوصول بتاعة Device Relay مفعّلة والتطبيق متصل" }
             }.start()
         }
 
@@ -106,10 +107,6 @@ class MainActivity : AppCompatActivity() {
         lblMove.text = "${prefs.getInt("moveMs", 420)} ms"
         seekMove.setOnSeekBarChangeListener(simple { val v = 200 + it * 50; prefs.edit().putInt("moveMs", v).apply(); lblMove.text = "$v ms" })
 
-        val seekHold = findViewById<SeekBar>(R.id.seekHold); val lblHold = findViewById<TextView>(R.id.lblHold)
-        seekHold.max = 18; seekHold.progress = (prefs.getInt("holdMs", 220) - 40) / 50
-        lblHold.text = "${prefs.getInt("holdMs", 220)} ms"
-        seekHold.setOnSeekBarChangeListener(simple { val v = 40 + it * 50; prefs.edit().putInt("holdMs", v).apply(); lblHold.text = "$v ms" })
 
         tick()
     }

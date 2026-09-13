@@ -84,6 +84,24 @@ class RelayClient(server: String, private val token: String, val deviceId: Strin
 
     fun tap(x: Float, y: Float): Result = command(JSONObject().put("type", "tap").put("x", x).put("y", y))
 
+    // ---- persistent finger (stays DOWN between HTTP calls) — the basis of closed-loop "magic snap" placement ----
+    /** Press at (x1,y1), pick the piece up with a tiny lift, glide to (x2,y2) and KEEP the finger down. One round-trip. */
+    fun lift(x1: Float, y1: Float, x2: Float, y2: Float, liftPx: Float): Result {
+        val steps = JSONArray()
+            .put(JSONObject().put("op", "down").put("finger", 0).put("x", x1).put("y", y1).put("duration", 140))
+            .put(JSONObject().put("op", "move").put("finger", 0).put("x", x1).put("y", y1 - liftPx).put("duration", 110))
+            .put(JSONObject().put("op", "move").put("finger", 0).put("x", (x1 + x2) / 2f).put("y", (y1 - liftPx + y2) / 2f).put("duration", 170))
+            .put(JSONObject().put("op", "move").put("finger", 0).put("x", x2).put("y", y2).put("duration", 170))
+        return command(JSONObject().put("type", "combo").put("combo", steps), 25000)
+    }
+    /** Nudge the held finger to an absolute point (finger stays down). */
+    fun fingerMove(x: Float, y: Float, durMs: Long = 120): Result =
+        command(JSONObject().put("type", "finger_move").put("finger", 0).put("x", x).put("y", y).put("duration", durMs))
+    /** Release the held finger (drop the piece). */
+    fun fingerUp(): Result = command(JSONObject().put("type", "finger_up").put("finger", 0))
+    /** Safety: release everything. */
+    fun releaseAll(): Result = command(JSONObject().put("type", "finger_up").put("finger", -1))
+
     /**
      * Drag with a real press-hold, smooth move, short settle at the target and release.
      * 1) `combo` (on-device script, exact timing)  2) fallback: plain `drag` action.
