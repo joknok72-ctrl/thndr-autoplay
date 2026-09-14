@@ -184,8 +184,9 @@ class BotService : Service() {
                     confirmedPieces = null; pendingScreen = null
                     // tray rect per slot: use the read rect if present, else a default slot box under the board
                     val slotW = ps.width / 3f
-                    if (ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25)… ثواني")
-                    val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3))
+                    val deep = prefs.getBoolean("deepEnd", false)
+                    if (deep && ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25)… ثواني")
+                    val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3), deep)
                     if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
                     steps = plan.moves.map { m ->
                         val piece = confirmed[m.slot]!!
@@ -294,7 +295,7 @@ class BotService : Service() {
 
                 val pieces = scr.tray.map { it?.piece }
                 report("بفكر… (${scr.piecesFound} قطع)")
-                val plan = AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, prefs.getInt("level", 3).coerceIn(1, 3))
+                val plan = AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, prefs.getInt("level", 3).coerceIn(1, 3), prefs.getBoolean("deepEnd", false))
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!

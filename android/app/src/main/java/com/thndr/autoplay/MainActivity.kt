@@ -47,6 +47,9 @@ class MainActivity : AppCompatActivity() {
         val chk = findViewById<android.widget.CheckBox>(R.id.chkConfirm)
         chk.isChecked = prefs.getBoolean("confirmPieces", false)
         chk.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("confirmPieces", v).apply() }
+        val chkDeep = findViewById<android.widget.CheckBox>(R.id.chkDeep)
+        chkDeep.isChecked = prefs.getBoolean("deepEnd", false)
+        chkDeep.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("deepEnd", v).apply() }
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3).coerceIn(1, 3) - 1

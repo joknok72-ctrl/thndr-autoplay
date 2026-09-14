@@ -95,7 +95,8 @@
     const mult0 = state.mult || 1; const lvl = Math.min(25, Math.max(1, state.level || 1));
     const remAfterRound = (25 - lvl) * 3;
     const roundsLeft = 25 - lvl;                 // full rounds after this one
-    const rollActive = opts.rollout !== false && W.rollRounds > 0 && roundsLeft >= 0 && roundsLeft < W.rollRounds;
+    const deep = !!opts.deep || !!W.deep;
+    const rollActive = deep && opts.rollout !== false && W.rollRounds > 0 && roundsLeft >= 0 && roundsLeft < W.rollRounds;
     let best = null; const cands = [];
     for (const order of permutations(slots)) {
       let beam = [{ board, bonus, mult: mult0, pts: 0, moves: [] }];
@@ -112,7 +113,7 @@
         }
         if (!next.length) { beam = []; break; }
         next.sort((a,b)=>b.score-a.score);
-        beam = next.slice(0, step===order.length-1 ? (rollActive ? W.rollK : 1) : (remaining <= W.endBeamRem ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
+        beam = next.slice(0, step===order.length-1 ? (rollActive ? W.rollK : 1) : ((deep && remaining <= W.endBeamRem) ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
       }
       if (beam.length) { for (const b of beam) cands.push(b); if (!best || beam[0].score > best.score) best = beam[0]; }
     }
@@ -136,7 +137,7 @@
           const cand = top[ci];
           let b = cand.board, bo = cand.bonus, mu = cand.mult, pts = cand.pts, dead = false;
           for (let k=0;k<roundsLeft && !dead;k++) {
-            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false });
+            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false, deep: false });
             if (pl.gameOver) { dead = true; break; }
             b = pl.finalBoard; bo = pl.finalBonus; mu = pl.finalMult; pts += pl.total;
           }

@@ -121,16 +121,34 @@ object ScreenParser {
             for (yy in (g.gh * 0.35f).toInt()..(g.gh * 0.65f).toInt()) for (xx in (g.gw * 0.3f).toInt()..(g.gw * 0.7f).toInt()) {
                 if (yy < g.gh && xx < g.gw) { tot++; if (g.bits[yy * g.gw + xx]) on++ }
             }
-            return tot > 0 && on < 0.25f * tot
+            return tot > 0 && on < 0.3f * tot
         }
-        return when (best.size) {
-            3 -> when (readGlyphAmong(glyphOf(best[0]), "135")) { '1' -> 150; '3' -> 300; else -> 500 }
-            2 -> {
-                val first = readGlyphAmong(glyphOf(best[0]), "125")
-                if (first == '5' || hollow(glyphOf(best[1]))) 50 else if (first == '1') 1000 else 2000
+        fun solid(g: Glyph): Boolean {
+            var on = 0; var tot = 0
+            for (yy in (g.gh * 0.35f).toInt()..(g.gh * 0.65f).toInt()) for (xx in (g.gw * 0.3f).toInt()..(g.gw * 0.7f).toInt()) {
+                if (yy < g.gh && xx < g.gw) { tot++; if (g.bits[yy * g.gw + xx]) on++ }
             }
-            else -> 50
+            return tot > 0 && on > 0.5f * tot
         }
+        // strict structural rules — an unreadable/ambiguous cell is ALWAYS 50 (never over-estimate)
+        val n = best.size
+        if (n < 2 || n > 3) return 50
+        val hs = best.map { it.y1 - it.y0 + 1 }; val ws = best.map { it.x1 - it.x0 + 1 }
+        if (hs.max() > hs.min() * 1.2f) return 50                       // digits share one height
+        val ar = FloatArray(n) { ws[it].toFloat() / hs[it] }
+        if (n == 3) {
+            // 150 / 300 / 500: 2nd & 3rd glyphs are wide, last one is a hollow 0
+            if (ar[1] < 0.55f || ar[1] > 0.95f || ar[2] < 0.55f || ar[2] > 0.95f || !hollow(glyphOf(best[2]))) return 50
+            val c = readGlyphAmong(glyphOf(best[0]), "135")
+            if (c == '1' && ar[0] > 0.55f) return 50                     // a '1' must be narrow
+            if (c != '1' && ar[0] < 0.5f) return 50
+            return when (c) { '1' -> 150; '3' -> 300; else -> 500 }
+        }
+        // n == 2 → "50" or "1K"/"2K": K is wide and solid, the 1/2 is narrow
+        if (ar[0] < 0.55f && ar[1] >= 0.55f && solid(glyphOf(best[1]))) {
+            return if (readGlyphAmong(glyphOf(best[0]), "12") == '1') 1000 else 2000
+        }
+        return 50
     }
 
     // ---------- HUD text (multiplier "NX" pill bottom-left, "LEVEL n/25" pill bottom-right) ----------

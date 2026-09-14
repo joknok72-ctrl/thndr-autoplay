@@ -194,17 +194,18 @@ object AI {
     /**
      * @param mult   current multiplier (from the "NX" pill)
      * @param gameLevel current level 1..25 (from the "LEVEL n/25" pill)
+     * @param deep   deeper end-game search (wider beam in the last moves + rollouts). OFF by default = v1.9.0 planning.
      * @param rollout end-game rollouts (last ROLL_ROUNDS rounds): re-rank the best candidates by simulating the
      *                remaining rounds with random pieces — same futures for every candidate.
      */
-    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, rollout: Boolean = true): Plan {
+    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = false, rollout: Boolean = true): Plan {
         val cfg = LEVELS[level.coerceIn(1, 3)]!!
         val slots = pieces.indices.filter { pieces[it] != null }
         if (slots.isEmpty()) return Plan(emptyList(), 0, false, mult)
         val mult0 = maxOf(1, mult); val lvl = gameLevel.coerceIn(1, 25)
         val remAfterRound = (25 - lvl) * 3
         val roundsLeft = 25 - lvl
-        val rollActive = rollout && ROLL_ROUNDS > 0 && roundsLeft in 0 until ROLL_ROUNDS
+        val rollActive = deep && rollout && ROLL_ROUNDS > 0 && roundsLeft in 0 until ROLL_ROUNDS
         var best: Node? = null
         val cands = ArrayList<Node>()
         for (order in perms(slots)) {
@@ -222,7 +223,7 @@ object AI {
                 if (next.isEmpty()) { beam = emptyList(); break }
                 next.sortByDescending { it.score }
                 val keep = if (step == order.size - 1) (if (rollActive) ROLL_K else 1)
-                           else if (remaining <= END_BEAM_REM) maxOf(cfg.beam, END_BEAM) else cfg.beam
+                           else if (deep && remaining <= END_BEAM_REM) maxOf(cfg.beam, END_BEAM) else cfg.beam
                 beam = next.take(keep)
             }
             if (beam.isNotEmpty()) { cands.addAll(beam); if (best == null || beam[0].score > best.score) best = beam[0] }
