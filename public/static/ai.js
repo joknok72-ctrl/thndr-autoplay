@@ -20,8 +20,11 @@
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
-              endFade: 6      // the end-bonus fades in over the last N moves
-            }, global.AI_W || {});
+              endFade: 6,     // the end-bonus fades in over the last N moves
+              endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
+              endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
+              rollRounds: 3, rollK: 5, rollM: 6, rollLevel: 1, rollMs: 1500   // end-game rollouts (last N rounds)
+            }, global.AI2_W || global.AI_W || {});
 
   /** Real THNDR scoring. */
   function realScore(res, mult) {
@@ -91,7 +94,9 @@
     if (!slots.length) return { moves: [], total: 0, gameOver: false };
     const mult0 = state.mult || 1; const lvl = Math.min(25, Math.max(1, state.level || 1));
     const remAfterRound = (25 - lvl) * 3;
-    let best = null;
+    const roundsLeft = 25 - lvl;                 // full rounds after this one
+    const rollActive = opts.rollout !== false && W.rollRounds > 0 && roundsLeft >= 0 && roundsLeft < W.rollRounds;
+    let best = null; const cands = [];
     for (const order of permutations(slots)) {
       let beam = [{ board, bonus, mult: mult0, pts: 0, moves: [] }];
       for (let step=0; step<order.length; step++) {
@@ -107,12 +112,47 @@
         }
         if (!next.length) { beam = []; break; }
         next.sort((a,b)=>b.score-a.score);
-        beam = next.slice(0, step===order.length-1 ? 1 : cfg.beam);
+        beam = next.slice(0, step===order.length-1 ? (rollActive ? W.rollK : 1) : (remaining <= W.endBeamRem ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
       }
-      if (beam.length && (!best || beam[0].score > best.score)) best = beam[0];
+      if (beam.length) { for (const b of beam) cands.push(b); if (!best || beam[0].score > best.score) best = beam[0]; }
     }
     if (!best) return { moves: [], total: 0, gameOver: true };
-    return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalMult: best.mult };
+    // ---- end-game rollouts: in the last W.rollRounds rounds, re-rank the top candidates by simulating the
+    //      remaining rounds with random pieces (expectimax over the unknown future) ----
+    if (rollActive && cands.length > 1) {
+      cands.sort((a,b)=>b.score-a.score);
+      const top = cands.slice(0, W.rollK);
+      let rs = 12345 + lvl * 7919; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
+      // same random future for every candidate (common random numbers → fair comparison)
+      const futures = [];
+      for (let m=0;m<W.rollM;m++) { const f=[]; for (let k=0;k<roundsLeft;k++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; f.push(ps); } futures.push(f); }
+      // interleave futures × candidates so a time budget (W.rollMs) keeps the comparison fair
+      const sums = new Array(top.length).fill(0); let used = 0; const t0 = Date.now();
+      for (let m=0;m<futures.length;m++) {
+        if (m > 0 && Date.now() - t0 > W.rollMs) break;
+        const f = futures[m]; const part = new Array(top.length).fill(0); let aborted = false;
+        for (let ci=0; ci<top.length; ci++) {
+          if (m > 0 && Date.now() - t0 > W.rollMs * 1.5) { aborted = true; break; }
+          const cand = top[ci];
+          let b = cand.board, bo = cand.bonus, mu = cand.mult, pts = cand.pts, dead = false;
+          for (let k=0;k<roundsLeft && !dead;k++) {
+            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false });
+            if (pl.gameOver) { dead = true; break; }
+            b = pl.finalBoard; bo = pl.finalBonus; mu = pl.finalMult; pts += pl.total;
+          }
+          if (!dead) { let cubes = 0; for (let i=0;i<N*N;i++) if (b[i]) cubes++; pts += cubes * 1000; }
+          part[ci] = pts;
+        }
+        if (aborted) break;
+        for (let ci=0; ci<top.length; ci++) sums[ci] += part[ci];
+        used++;
+      }
+      let bestAvg = -Infinity, bestNode = null;
+      for (let ci=0; ci<top.length; ci++) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
+      if (bestNode) best = bestNode;
+    }
+    return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalBonus: best.bonus, finalMult: best.mult };
   }
   global.AI = { plan, evaluate, realScore, LEVELS, W, bestSingle: (b,bo,p,st,o)=>plan(b,bo,[p],st,o), evaluateBoard: (b)=>boardQuality(b, LEVELS[3]).q };
+  global.AI2 = global.AI;
 })(typeof self !== 'undefined' ? self : this);

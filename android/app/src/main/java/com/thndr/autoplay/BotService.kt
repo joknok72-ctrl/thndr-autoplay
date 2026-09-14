@@ -184,6 +184,7 @@ class BotService : Service() {
                     confirmedPieces = null; pendingScreen = null
                     // tray rect per slot: use the read rect if present, else a default slot box under the board
                     val slotW = ps.width / 3f
+                    if (ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25)… ثواني")
                     val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3))
                     if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
                     steps = plan.moves.map { m ->
