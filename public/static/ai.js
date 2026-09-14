@@ -1,122 +1,111 @@
-/* ===== THNDR AI — strongest-move planner =====
-   Strategy:
-   1. Try all 6 orderings of the 3 pieces.
-   2. Beam search over placements (beam width depends on level).
-   3. Evaluate = immediate points (with streak / multiplier / bonus cells)
-                 + board quality (holes, fragmentation, open space, big-piece fit, near-full lines)
-                 + multiplier growth value + survival (probe pieces still placeable).
-   Works in the main thread or inside a Web Worker (see ai-worker.js).
+/* ===== THNDR AI v2 — SCORE-MAX planner (rules reverse-engineered from 26 real screenshots) =====
+   REAL RULES:
+     points(move) = (cubes + 20 × linesCleared + bonusCovered) × multAfter
+     multAfter    = mult + orangeCubesCleared      (permanent; multiplies EVERYTHING that comes later)
+     bonus cells pay when COVERED by a piece (they vanish), new ones spawn (max 3), values grow with level
+     every round (3 pieces) = 1 level; game = 25 levels = 75 pieces; exactly one piece per round has an orange cube
+   STRATEGY: maximise total score over the remaining horizon:
+     immediate points + value of a higher multiplier for the rest of the game + survival (weighted by how
+     much game is left and how big the multiplier is) + oranges parked in almost-complete lines.
 */
 (function (global) {
   'use strict';
   const E = global.Engine; const N = E.N; const idx = E.idx;
-
-  // probe pieces used to measure "future placeability"
   const PROBES = ['sq3','i5','v5','sq2','Lbig1','T4a','i4','v4','l3a','i3','v3','plus'].map(k => E.makePiece(k));
   const PROBE_W = { sq3: 3.5, i5: 2, v5: 2, sq2: 1.5, Lbig1: 1.5, T4a: 1, i4: 1, v4: 1, l3a: .6, i3: .6, v3: .6, plus: 1 };
+  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
+  const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
+              kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
+              surv: 2.0,      // survival/board-quality weight (scaled by remaining moves)
+              orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
+              bonusKeep: 0.4  // uncovered bonus cells: keep them coverable
+            }, global.AI_W || {});
 
-  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 9 } };
-  // weights tuned by self-play simulation (25-level survival + score)
-  const W = { empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15, pts: .5, mult: 45 };
+  /** Real THNDR scoring. */
+  function realScore(res, mult) {
+    const nm = mult + res.orangeCleared;
+    return { points: (res.cells.length + 20 * res.lines + res.bonusHit) * nm, mult: nm, lines: res.lines };
+  }
 
-  function evaluateBoard(board, bonus, cfg) {
+  function boardQuality(board, cfg) {
     let empty = 0, holes = 0, trans = 0, nearFull = 0, edgeTouch = 0, islands = 0;
-    // rows/cols fill counts
     const rowFill = new Array(N).fill(0), colFill = new Array(N).fill(0);
-    for (let r=0;r<N;r++) for (let c=0;c<N;c++) { const v = board[idx(r,c)]; if (v) { rowFill[r]++; colFill[c]++; } else empty++; }
-    for (let r=0;r<N;r++) {
-      for (let c=0;c<N;c++) {
-        const i = idx(r,c), v = !!board[i];
-        // transitions (fragmentation)
-        if (c<N-1 && v !== !!board[idx(r,c+1)]) trans++;
-        if (r<N-1 && v !== !!board[idx(r+1,c)]) trans++;
-        if (!v) {
-          // hole: empty cell whose 4 neighbours are all filled or walls
-          const up = r===0 || board[idx(r-1,c)], dn = r===N-1 || board[idx(r+1,c)], lf = c===0 || board[idx(r,c-1)], rt = c===N-1 || board[idx(r,c+1)];
-          const n = (up?1:0)+(dn?1:0)+(lf?1:0)+(rt?1:0);
-          if (n===4) holes += 3; else if (n===3) holes += 1;   // dead-end cells are also bad
-        } else {
-          if (r===0||r===N-1||c===0||c===N-1) edgeTouch++;      // blocks hugging edges keep the center open
-        }
-      }
+    for (let r=0;r<N;r++) for (let c=0;c<N;c++) { if (board[idx(r,c)]) { rowFill[r]++; colFill[c]++; } else empty++; }
+    for (let r=0;r<N;r++) for (let c=0;c<N;c++) {
+      const i = idx(r,c), v = !!board[i];
+      if (c<N-1 && v !== !!board[idx(r,c+1)]) trans++;
+      if (r<N-1 && v !== !!board[idx(r+1,c)]) trans++;
+      if (!v) {
+        const up = r===0 || board[idx(r-1,c)], dn = r===N-1 || board[idx(r+1,c)], lf = c===0 || board[idx(r,c-1)], rt = c===N-1 || board[idx(r,c+1)];
+        const n = (up?1:0)+(dn?1:0)+(lf?1:0)+(rt?1:0);
+        if (n===4) holes += 3; else if (n===3) holes += 1;
+      } else if (r===0||r===N-1||c===0||c===N-1) edgeTouch++;
     }
+    const boxFill = new Array(9).fill(0);
     for (let k=0;k<N;k++) {
-      // near-full lines are opportunities (7-8/9) but 8/9 with an awkward hole is risky, still positive
       if (rowFill[k] >= 7) nearFull += (rowFill[k]-6);
       if (colFill[k] >= 7) nearFull += (colFill[k]-6);
-      // 3x3 boxes: 7-8 of 9 filled is a near-clear opportunity too
       const br=(k/3|0)*3, bc=(k%3)*3; let bf=0; for(let r=br;r<br+3;r++) for(let c=bc;c<bc+3;c++) if(board[idx(r,c)]) bf++;
-      if (bf >= 7) nearFull += (bf-6);
+      boxFill[k]=bf; if (bf >= 7) nearFull += (bf-6);
     }
-    // placeability of probe pieces (survival + flexibility)
     let fit = 0, dead = 0;
-    const probes = PROBES.slice(0, cfg.probes);
-    for (const p of probes) { const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
-    // open 3x3 windows = room for the biggest pieces
+    for (let k=0;k<Math.min(cfg.probes,PROBES.length);k++) { const p=PROBES[k]; const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
     let sq3 = 0;
     for (let r=0;r<=6;r++) for (let c=0;c<=6;c++) { let ok=true; for (let a=0;a<3&&ok;a++) for (let b=0;b<3;b++) if (board[idx(r+a,c+b)]) { ok=false; break; } if (ok) sq3++; }
-    // small islands of filled blocks (isolated blobs are hard to clear)
     const seen = new Uint8Array(N*N);
-    for (let i=0;i<N*N;i++) if (board[i] && !seen[i]) { let size=0; const st=[i]; seen[i]=1; while(st.length){ const j=st.pop(); size++; const r=(j/N)|0, c=j%N; const nb=[]; if(r>0)nb.push(j-N); if(r<N-1)nb.push(j+N); if(c>0)nb.push(j-1); if(c<N-1)nb.push(j+1); for(const k of nb) if(board[k]&&!seen[k]){seen[k]=1;st.push(k);} } if (size<=2) islands++; }
+    for (let i=0;i<N*N;i++) if (board[i] && !seen[i]) { let size=0; const st=[i]; seen[i]=1; while(st.length){ const j=st.pop(); size++; const r=(j/N)|0, c=j%N; if(r>0&&board[j-N]&&!seen[j-N]){seen[j-N]=1;st.push(j-N);} if(r<N-1&&board[j+N]&&!seen[j+N]){seen[j+N]=1;st.push(j+N);} if(c>0&&board[j-1]&&!seen[j-1]){seen[j-1]=1;st.push(j-1);} if(c<N-1&&board[j+1]&&!seen[j+1]){seen[j+1]=1;st.push(j+1);} } if (size<=2) islands++; }
+    const q = empty * W.empty - holes * W.holes - trans * W.trans + nearFull * W.near + edgeTouch * W.edge + fit * W.fit - islands * W.isl + sq3 * W.sq3 - dead * W.dead;
+    return { q, rowFill, colFill, boxFill, dead };
+  }
 
-    // bonus cells still on board: keep them reachable (slight reward for lines near them being fillable)
+  /** Full evaluation of a node. ctx = { mult0, remaining } (remaining = moves left AFTER this node) */
+  function evaluate(node, ctx, cfg) {
+    const bq = boardQuality(node.board, cfg);
+    const rem = Math.max(0, ctx.remaining);
+    const multGain = (node.mult - ctx.mult0) * rem * W.kMult;
+    let orangePot = 0;
+    for (let i=0;i<N*N;i++) if (node.board[i] === 2) {
+      const r=(i/N)|0, c=i%N, b=((r/3)|0)*3+((c/3)|0);
+      const prog = Math.max(bq.rowFill[r], bq.colFill[c], bq.boxFill[b]) / 9;
+      orangePot += rem * W.kMult * W.orange * prog * prog;
+    }
     let bonusPot = 0;
-    for (let i=0;i<N*N;i++) if (bonus[i]) { const r=(i/N)|0, c=i%N; bonusPot += bonus[i] * (Math.max(rowFill[r], colFill[c]) / N) * 0.02; }
-
-    return empty * W.empty - holes * W.holes - trans * W.trans + nearFull * W.near + edgeTouch * W.edge + fit * W.fit - islands * W.isl + bonusPot + sq3 * W.sq3 - dead * W.dead;
+    for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
+    const survW = W.surv * Math.min(1, rem / 15) * (1 + node.mult * 0.15) * 4;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW - (bq.dead > 0 && rem > 0 ? (W.deadPen||400) * (1 + node.mult*0.2) : 0);
   }
 
-  function permutations(arr) {
-    if (arr.length<=1) return [arr];
-    const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out;
-  }
+  function permutations(arr) { if (arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out; }
 
-  /**
-   * plan(board, bonus, pieces[3], state{streak,mult}, opts{level,bonusMode})
-   * returns { moves:[{slot,r,c,points,lines}], total, eval, gameOver:boolean }
-   */
+  /** plan(board, bonus, pieces[3], state{mult, level}, opts{level}) */
   function plan(board, bonus, pieces, state, opts) {
-    opts = opts || {}; const cfg = LEVELS[opts.level||2] || LEVELS[2]; const bonusMode = opts.bonusMode || 'clear';
+    opts = opts || {}; const cfg = LEVELS[opts.level||3] || LEVELS[3];
     const slots = pieces.map((p,i)=>p?i:-1).filter(i=>i>=0);
     if (!slots.length) return { moves: [], total: 0, gameOver: false };
-    const orders = permutations(slots);
+    const mult0 = state.mult || 1; const lvl = Math.min(25, Math.max(1, state.level || 1));
+    const remAfterRound = (25 - lvl) * 3;
     let best = null;
-    const W_PTS = W.pts, W_MULT = W.mult;
-
-    for (const order of orders) {
-      // beam: each node = { board, bonus, streak, mult, pts, moves[] }
-      let beam = [{ board, bonus, streak: state.streak||0, mult: state.mult||1, pts: 0, moves: [] }];
+    for (const order of permutations(slots)) {
+      let beam = [{ board, bonus, mult: mult0, pts: 0, moves: [] }];
       for (let step=0; step<order.length; step++) {
         const slot = order[step]; const piece = pieces[slot]; const next = [];
-        for (const node of beam) {
-          const places = E.allPlacements(node.board, piece);
-          for (const [r,c] of places) {
-            const res = E.place(node.board, node.bonus, piece, r, c, { bonusMode });
-            const sc = E.scoreMove(res, node);
-            const pts = node.pts + sc.points;
-            const heur = evaluateBoard(res.board, res.bonus, cfg) + (sc.mult - node.mult) * W_MULT;
-            next.push({ board: res.board, bonus: res.bonus, streak: sc.streak, mult: sc.mult, pts, heur, score: pts*W_PTS + heur,
-              moves: [...node.moves, { slot, r, c, points: sc.points, lines: sc.lines, rows: res.rows, cols: res.cols }] });
-          }
+        const remaining = remAfterRound + (order.length - 1 - step);
+        for (const node of beam) for (const [r,c] of E.allPlacements(node.board, piece)) {
+          const res = E.place(node.board, node.bonus, piece, r, c, { bonusMode: 'cover' });
+          const sc = realScore(res, node.mult);
+          const nn = { board: res.board, bonus: res.bonus, mult: sc.mult, pts: node.pts + sc.points,
+            moves: [...node.moves, { slot, r, c, points: sc.points, lines: sc.lines, rows: res.rows, cols: res.cols, boxes: res.boxes }] };
+          nn.score = evaluate(nn, { mult0, remaining }, cfg);
+          next.push(nn);
         }
         if (!next.length) { beam = []; break; }
         next.sort((a,b)=>b.score-a.score);
         beam = next.slice(0, step===order.length-1 ? 1 : cfg.beam);
       }
-      if (beam.length) {
-        const cand = beam[0];
-        // final survival check: is board still alive for a broad set of pieces? (already in heur via fit)
-        if (!best || cand.score > best.score) best = cand;
-      }
+      if (beam.length && (!best || beam[0].score > best.score)) best = beam[0];
     }
     if (!best) return { moves: [], total: 0, gameOver: true };
-    return { moves: best.moves, total: best.pts, eval: best.heur, score: best.score, gameOver: false, finalBoard: best.board };
+    return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalMult: best.mult };
   }
-
-  /** Best single move for one piece (used for hints) */
-  function bestSingle(board, bonus, piece, state, opts) {
-    return plan(board, bonus, [piece], state, opts);
-  }
-
-  global.AI = { plan, bestSingle, evaluateBoard, LEVELS };
+  global.AI = { plan, evaluate, realScore, LEVELS, W, bestSingle: (b,bo,p,st,o)=>plan(b,bo,[p],st,o), evaluateBoard: (b)=>boardQuality(b, LEVELS[3]).q };
 })(typeof self !== 'undefined' ? self : this);

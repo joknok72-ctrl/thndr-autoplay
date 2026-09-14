@@ -22,7 +22,8 @@ data class TrayPiece(val piece: Piece, val cx: Float, val cy: Float, val cubePx:
 data class Screen(
     val board: IntArray, val bonus: IntArray,
     val bx0: Int, val by0: Int, val bx1: Int, val by1: Int, val pitch: Float,
-    val tray: List<TrayPiece?>, val width: Int, val height: Int
+    val tray: List<TrayPiece?>, val width: Int, val height: Int,
+    val mult: Int = 1, val level: Int = 1
 ) {
     fun cellCenter(r: Int, c: Int): Pair<Float, Float> = Pair(bx0 + (c + 0.5f) * pitch, by0 + (r + 0.5f) * pitch)
     val piecesFound get() = tray.count { it != null }
@@ -78,6 +79,77 @@ object ScreenParser {
             span < 0.36f -> 1000                              // "1K" is narrow (thin 1 + K)
             else -> 50
         }
+    }
+
+
+    // ---------- HUD text (multiplier "NX" pill bottom-left, "LEVEL n/25" pill bottom-right) ----------
+    // 7x12 grey-level templates (0..3 per cell) learned from 34 real screenshots; nearest-template matching.
+    private const val GW = 7; private const val GH = 12
+    private val GLYPHS: Map<Char, FloatArray> = mapOf(
+        '/' to "000133300023310003330000333000233100033300003330001332000333000033300023320003331000",
+        '0' to "023332013333312332332331013333101333310023331002333100233310133233133213333310233320",
+        '1' to "012333323333333333333321333310023330002333000233300023330002333000233300023330002333",
+        '2' to "023331023333323332333331023311002330000332000233100233100133200233311133333333333333",
+        '3' to "023332013333313332332121023200123320023320002332100123322200233332123333333321333331",
+        '4' to "001333100233310033330013333002333301332330232133033223313333333333333322223320001331",
+        '5' to "233333233333323322221331000033222103333331233233311102332200133332023333323321333321",
+        '6' to "013332003333312332333232012133212103333331333233333201333310133232123313333320233330",
+        '7' to "333333333333332222333000033300013320002331000332000133100023200013310002330001332000",
+        '8' to "023332013333312331333232023313323320233320123332123323323320133332023323323321333331",
+        '9' to "023331013333313332332332023333202333332333233333312333331231233233233323333311333320",
+        'E' to "333333333333333320000331000033200003333332333333333200003310000332000033333333333333",
+        'L' to "331000033100003310000331000033100003310000331000033100003310000332000033333333333333",
+        'V' to "220002333001333300132231013113102311320230022022002313200232310013331000333000033300",
+        'X' to "331013323202321332331023332001333200133310003330001333100233320033233013202323310233",
+    ).mapValues { e -> FloatArray(GW * GH) { i -> (e.value[i] - '0') / 4f + 0.125f } }
+    private class Glyph(val bits: BooleanArray, val gw: Int, val gh: Int)
+    private fun glyphs(px: IntArray, W: Int, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int): List<Glyph> {
+        val w = x1 - x0; val h = y1 - y0
+        val m = BooleanArray(w * h) { val p = px[(y0 + it / w) * W + x0 + it % w]; mx(p) > 170 && sat(p) < 80 }
+        val out = ArrayList<Glyph>()
+        var x = 0
+        while (x < w) {
+            var on = false; for (y in 0 until h) if (m[y * w + x]) { on = true; break }
+            if (!on) { x++; continue }
+            val sx = x
+            while (x < w) { var any = false; for (y in 0 until h) if (m[y * w + x]) { any = true; break }; if (!any) break; x++ }
+            val ex = x - 1
+            var ry0 = h; var ry1 = -1
+            for (y in 0 until h) for (xx in sx..ex) if (m[y * w + xx]) { if (y < ry0) ry0 = y; if (y > ry1) ry1 = y }
+            val gh = ry1 - ry0 + 1; val gw = ex - sx + 1
+            if (gh >= minH && gw >= 3) out.add(Glyph(BooleanArray(gw * gh) { m[(ry0 + it / gw) * w + sx + it % gw] }, gw, gh))
+        }
+        return out
+    }
+    private fun readGlyph(g: Glyph): Char {
+        val v = FloatArray(GW * GH)
+        for (yy in 0 until GH) for (xx in 0 until GW) {
+            val sx0 = (xx * g.gw / GW.toFloat()).toInt(); val sx1 = (xx + 1) * g.gw / GW.toFloat()
+            val sy0 = (yy * g.gh / GH.toFloat()).toInt(); val sy1 = (yy + 1) * g.gh / GH.toFloat()
+            var sum = 0f; var cnt = 0f
+            var y = sy0; while (y < sy1 && y < g.gh) { var x = sx0; while (x < sx1 && x < g.gw) { if (g.bits[y * g.gw + x]) sum++; cnt++; x++ }; y++ }
+            v[yy * GW + xx] = if (cnt > 0) sum / cnt else 0f
+        }
+        var best = '?'; var bestD = Float.MAX_VALUE
+        for ((ch, t) in GLYPHS) { var d = 0f; for (i in v.indices) d += abs(v[i] - t[i]); if (d < bestD) { bestD = d; best = ch } }
+        return best
+    }
+    /** Returns (mult, level) or (0,0) parts when unreadable. */
+    private fun readHud(px: IntArray, W: Int, H: Int, by1: Int, pitch: Float): Pair<Int, Int> {
+        val y0 = (by1 + pitch * 0.4f).toInt().coerceIn(0, H - 2); val y1 = (by1 + pitch * 1.6f).toInt().coerceIn(y0 + 1, H - 1)
+        val minH = (pitch * 0.2f).toInt()
+        var mult = 0; var level = 0
+        try {
+            val ms = glyphs(px, W, 4, W / 2, y0, y1, minH).map { readGlyph(it) }.joinToString("")
+            val digits = ms.substringBefore('X').filter { it.isDigit() }
+            if (ms.contains('X') && digits.isNotEmpty()) mult = digits.toInt()
+        } catch (_: Throwable) {}
+        try {
+            val ls = glyphs(px, W, W / 2, W - 4, y0, y1, minH).map { readGlyph(it) }.joinToString("")
+            val li = ls.indexOf("LEVEL"); val si = ls.indexOf('/')
+            if (li >= 0 && si > li + 5) { val d = ls.substring(li + 5, si).filter { it.isDigit() }; if (d.isNotEmpty()) level = d.toInt() }
+        } catch (_: Throwable) {}
+        return Pair(mult.coerceIn(0, 99), level.coerceIn(0, 25))
     }
 
     fun parse(bmp: Bitmap): Screen {
@@ -244,6 +316,7 @@ object ScreenParser {
             if (cells.isEmpty()) { tray.add(null); continue }
             tray.add(TrayPiece(Piece(cells), (minx + maxx) / 2f, (miny + maxy) / 2f + ty0, cube, minx, miny + ty0, maxx, maxy + ty0))
         }
-        return Screen(board, bonus, bx0, by0, bx1, by1, pitch, tray, W, H)
+        val (hudMult, hudLevel) = readHud(px, W, H, by1, pitch)
+        return Screen(board, bonus, bx0, by0, bx1, by1, pitch, tray, W, H, if (hudMult > 0) hudMult else 1, if (hudLevel > 0) hudLevel else 1)
     }
 }

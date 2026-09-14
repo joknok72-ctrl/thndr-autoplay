@@ -62,7 +62,9 @@ object Engine {
     fun place(board: IntArray, bonus: IntArray, p: Piece, r0: Int, c0: Int): PlaceResult {
         val nb = board.copyOf(); val nbonus = bonus.copyOf()
         val cells = IntArray(p.cells.size)
-        p.cells.forEachIndexed { k, c -> val i = idx(r0 + c.r, c0 + c.c); nb[i] = c.v; cells[k] = i }
+        // REAL RULE (verified on screenshots): a bonus cell pays its value when a cube is placed ON it, then vanishes.
+        var bonusHit = 0
+        p.cells.forEachIndexed { k, c -> val i = idx(r0 + c.r, c0 + c.c); nb[i] = c.v; cells[k] = i; if (nbonus[i] != 0) { bonusHit += nbonus[i]; nbonus[i] = 0 } }
         val rows = ArrayList<Int>(); val cols = ArrayList<Int>(); val boxes = ArrayList<Int>()
         for (r in 0 until N) { var full = true; for (c in 0 until N) if (nb[idx(r, c)] == 0) { full = false; break }; if (full) rows.add(r) }
         for (c in 0 until N) { var full = true; for (r in 0 until N) if (nb[idx(r, c)] == 0) { full = false; break }; if (full) cols.add(c) }
@@ -75,21 +77,16 @@ object Engine {
         for (r in rows) for (c in 0 until N) cleared.add(idx(r, c))
         for (c in cols) for (r in 0 until N) cleared.add(idx(r, c))
         for (b in boxes) { val br = (b / 3) * 3; val bc = (b % 3) * 3; for (r in br until br + 3) for (c in bc until bc + 3) cleared.add(idx(r, c)) }
-        var orange = 0; var bonusHit = 0
-        for (i in cleared) { if (nb[i] == 2) orange++; if (nbonus[i] != 0) { bonusHit += nbonus[i]; nbonus[i] = 0 }; nb[i] = 0 }
+        var orange = 0
+        for (i in cleared) { if (nb[i] == 2) orange++; nb[i] = 0 }
         return PlaceResult(nb, nbonus, rows, cols, boxes, orange, orange * p.yv, bonusHit, cells, cleared.toIntArray())
     }
 
+    /** REAL THNDR scoring (from 26 screenshots): (cubes + 20·lines + bonusCovered) × (mult + orangesCleared). */
     fun score(res: PlaceResult, streak0: Int, mult0: Int): Score {
-        var pts = res.cells.size
-        var streak = streak0
-        if (res.lines > 0) {
-            streak += 1
-            val base = 20 * res.lines * res.lines
-            pts += Math.round(base * mult0 * (1 + 0.5 * (streak - 1))).toInt()
-        } else streak = 0
-        if (res.bonusHit > 0) pts += res.bonusHit * mult0
-        return Score(pts, streak, mult0 + res.yvGain, res.lines)
+        val nm = mult0 + res.orangeCleared
+        val pts = (res.cells.size + 20 * res.lines + res.bonusHit) * nm
+        return Score(pts, if (res.lines > 0) streak0 + 1 else 0, nm, res.lines)
     }
 
     fun shape(vararg rc: Pair<Int, Int>): Piece = Piece(rc.map { Cell(it.first, it.second, 1) })

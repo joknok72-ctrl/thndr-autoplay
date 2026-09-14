@@ -93,19 +93,12 @@
     return { board: nb, bonus: nbonus, rows, cols, boxes, lines: rows.length+cols.length+boxes.length, orangeCleared, yvGain: orangeCleared * (piece.yv||1), bonusHit, cells, clearedIdx: [...clearedIdx] };
   }
 
-  /** Scoring — modeled on the screenshots: +1 per cube, line clears scale quadratically, streak & multiplier amplify. */
+  /** REAL THNDR scoring (reverse-engineered from 26 consecutive screenshots):
+   *   points = (cubes + 20·linesCleared + bonusCovered) × (mult + orangeCubesCleared); multiplier is permanent. */
   function scoreMove(res, state) {
-    const cubes = res.cells.length;
-    let pts = cubes;
-    let streak = state.streak || 0, mult = state.mult || 1;
-    if (res.lines > 0) {
-      streak += 1;
-      const base = 20 * res.lines * res.lines;         // 1 line=20, 2=80, 3=180
-      pts += Math.round(base * mult * (1 + 0.5 * (streak - 1)));
-    } else streak = 0;
-    if (res.bonusHit) pts += Math.round(res.bonusHit * mult);
-    const newMult = mult + res.yvGain;
-    return { points: pts, streak, mult: newMult, cubes, lines: res.lines };
+    const mult = (state.mult || 1) + res.orangeCleared;
+    const pts = (res.cells.length + 20 * res.lines + (res.bonusHit || 0)) * mult;
+    return { points: pts, streak: res.lines > 0 ? (state.streak || 0) + 1 : 0, mult, cubes: res.cells.length, lines: res.lines };
   }
 
   const Engine = { N, SHAPES, LIB_ORDER, makePiece, normalize, rotate, flip, randomPiece, emptyBoard, idx, canPlace, anyPlacement, allPlacements, place, scoreMove };
