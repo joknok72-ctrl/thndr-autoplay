@@ -31,62 +31,18 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             if (!Settings.canDrawOverlays(this)) { toast("فعّل إذن الظهور فوق التطبيقات أولاً"); return@setOnClickListener }
             if (prefs.getInt("mode", 0) == 1 && !GestureService.isRunning) { toast("وضع البوت التلقائي يحتاج خدمة الوصول — فعّلها أو اختر وضع المرشد"); return@setOnClickListener }
-            if (prefs.getInt("mode", 0) == 2 && (prefs.getString("relayToken", "")!!.isBlank() || prefs.getString("relayDevice", "")!!.isBlank())) { toast("اكتب توكن Device Relay ومعرّف الجهاز واضغط «اختبار الاتصال» أولاً"); return@setOnClickListener }
             val mpm = getSystemService(MediaProjectionManager::class.java)
             startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJ)
         }
         findViewById<Button>(R.id.btnStop).setOnClickListener { startService(Intent(this, BotService::class.java).setAction(BotService.ACTION_STOP)) }
-        findViewById<Button>(R.id.btnResetCal).setOnClickListener { prefs.edit().remove("offX").remove("offY").remove("calOffX").remove("calOffY").remove("calScale").remove("calPitch").putBoolean("calibrated", false).apply(); toast("تم تصفير المعايرة") }
+        findViewById<Button>(R.id.btnResetCal).setOnClickListener { prefs.edit().remove("offX").remove("offY").putBoolean("calibrated", false).apply(); toast("تم تصفير المعايرة") }
 
         val rgMode = findViewById<android.widget.RadioGroup>(R.id.rgMode)
-        rgMode.check(when (prefs.getInt("mode", 0)) { 1 -> R.id.modeAuto; 2 -> R.id.modeRelay; else -> R.id.modeGuide })
+        rgMode.check(if (prefs.getInt("mode", 0) == 1) R.id.modeAuto else R.id.modeGuide)
         val autoOnly = findViewById<android.view.View>(R.id.autoOnly); val resetCal = findViewById<Button>(R.id.btnResetCal)
-        val relayBox = findViewById<android.view.View>(R.id.relayBox)
-        fun refreshMode() {
-            val m = prefs.getInt("mode", 0)
-            // drag speed / animation delay / calibration only matter for the internal gesture bot; relay mode is closed-loop
-            autoOnly.visibility = if (m == 1) android.view.View.VISIBLE else android.view.View.GONE; resetCal.visibility = autoOnly.visibility
-            relayBox.visibility = if (m == 2) android.view.View.VISIBLE else android.view.View.GONE
-        }
-        rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", when (id) { R.id.modeAuto -> 1; R.id.modeRelay -> 2; else -> 0 }).apply(); refreshMode() }
+        fun refreshMode() { val auto = prefs.getInt("mode", 0) == 1; autoOnly.visibility = if (auto) android.view.View.VISIBLE else android.view.View.GONE; resetCal.visibility = autoOnly.visibility }
+        rgMode.setOnCheckedChangeListener { _, id -> prefs.edit().putInt("mode", if (id == R.id.modeAuto) 1 else 0).apply(); refreshMode() }
         refreshMode()
-
-        // ---- Device Relay settings ----
-        val edServer = findViewById<android.widget.EditText>(R.id.edRelayServer); val edToken = findViewById<android.widget.EditText>(R.id.edRelayToken); val edDevice = findViewById<android.widget.EditText>(R.id.edRelayDevice)
-        val stRelay = findViewById<TextView>(R.id.stRelay)
-        edServer.setText(prefs.getString("relayServer", RelayClient.DEFAULT_SERVER)); edToken.setText(prefs.getString("relayToken", "")); edDevice.setText(prefs.getString("relayDevice", ""))
-        fun saveRelay() = prefs.edit().putString("relayServer", edServer.text.toString().trim().ifEmpty { RelayClient.DEFAULT_SERVER }).putString("relayToken", edToken.text.toString().trim()).putString("relayDevice", edDevice.text.toString().trim()).apply()
-        val watcher = object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) { saveRelay() }
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}; override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        }
-        edServer.addTextChangedListener(watcher); edToken.addTextChangedListener(watcher); edDevice.addTextChangedListener(watcher)
-        fun client(): RelayClient? { saveRelay(); val t = prefs.getString("relayToken", "")!!; if (t.isBlank()) { stRelay.text = "❌ اكتب التوكن أولاً"; return null }; return RelayClient(prefs.getString("relayServer", RelayClient.DEFAULT_SERVER)!!, t, prefs.getString("relayDevice", "")!!) }
-        findViewById<Button>(R.id.btnRelayTest).setOnClickListener {
-            val rc = client() ?: return@setOnClickListener
-            stRelay.text = "⏳ بتأكد…"
-            Thread {
-                val h = rc.health()
-                if (!h.ok) { ui.post { stRelay.text = "❌ السيرفر مش متاح: ${h.error}" }; return@Thread }
-                val devs = rc.devices()
-                if (rc.deviceId.isBlank()) {
-                    val on = devs.firstOrNull { it.second } ?: devs.firstOrNull()
-                    if (on != null) { prefs.edit().putString("relayDevice", on.first).apply(); ui.post { edDevice.setText(on.first) } }
-                }
-                val rc2 = client() ?: return@Thread
-                val (ok, d) = rc2.online()
-                ui.post { stRelay.text = (if (ok) "✅ " else "❌ ") + d + "\nالأجهزة: " + (if (devs.isEmpty()) "لا شيء" else devs.joinToString { (it.first) + (if (it.second) " (متصل)" else " (غير متصل)") }) }
-            }.start()
-        }
-        findViewById<Button>(R.id.btnRelayDrag).setOnClickListener {
-            val rc = client() ?: return@setOnClickListener
-            stRelay.text = "⏳ بلمس مكان فاضي في الشاشة عبر Device Relay…"
-            val dm = resources.displayMetrics; val w = dm.widthPixels.toFloat(); val hgt = dm.heightPixels.toFloat()
-            Thread {
-                val r = rc.tap(w / 2f, hgt * 0.12f)
-                ui.post { stRelay.text = if (r.ok) "✅ خدمة الوصول بتاعة Device Relay شغالة — جاهز" else "❌ اللمسة فشلت: ${r.error}\nتأكد إن خدمة الوصول بتاعة Device Relay مفعّلة والتطبيق متصل" }
-            }.start()
-        }
 
         val chk = findViewById<android.widget.CheckBox>(R.id.chkConfirm)
         chk.isChecked = prefs.getBoolean("confirmPieces", false)
@@ -106,7 +62,6 @@ class MainActivity : AppCompatActivity() {
         seekMove.max = 16; seekMove.progress = (prefs.getInt("moveMs", 420) - 200) / 50
         lblMove.text = "${prefs.getInt("moveMs", 420)} ms"
         seekMove.setOnSeekBarChangeListener(simple { val v = 200 + it * 50; prefs.edit().putInt("moveMs", v).apply(); lblMove.text = "$v ms" })
-
 
         tick()
     }
@@ -129,7 +84,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_PROJ && resultCode == Activity.RESULT_OK && data != null) {
             val i = Intent(this, BotService::class.java).setAction(BotService.ACTION_START).putExtra(BotService.EXTRA_CODE, resultCode).putExtra(BotService.EXTRA_DATA, data)
             startForegroundService(i)
-            toast(when (prefs.getInt("mode", 0)) { 1, 2 -> "افتح لعبة THNDR واضغط ▶ — البوت هيسحب لوحده"; else -> "افتح لعبة THNDR واضغط ▶ — هيوريك فين تحط كل قطعة" })
+            toast(if (prefs.getInt("mode", 0) == 1) "افتح لعبة THNDR واضغط ▶ — البوت هيسحب لوحده" else "افتح لعبة THNDR واضغط ▶ — هيوريك فين تحط كل قطعة")
         }
     }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
