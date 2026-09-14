@@ -304,6 +304,7 @@
     showEnd('💥', 'انتهت اللعبة', `وقفت عند اللفل ${S.level}`); renderAll();
   }
   function win() {
+    const endBonus = S.board.filter(v => v).length * 1000; S.score += endBonus; toast(`مكافأة النهاية: ${S.board.filter(v => v).length} مكعب × 1K = +${endBonus.toLocaleString('en-US')}`);
     S.over = true; S.won = true; stats.games++; stats.wins++; save('thndr-stats', stats); sfx.level(); vib([40, 40, 40, 40, 200]);
     showEnd('🏆', 'فوز!', 'خلّصت الـ 25 لفل كاملين');
   }

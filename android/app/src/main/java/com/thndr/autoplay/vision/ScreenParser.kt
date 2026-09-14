@@ -290,8 +290,27 @@ object ScreenParser {
         }
         fun fits(d: Int): Boolean { for (n in 1..5) if (abs(d - (n * P - gap)) <= P * 0.3f) return true; return false }
         val good = comps.filter { c -> val w = c.x1 - c.x0 + 1; val h = c.y1 - c.y0 + 1; fits(w) && fits(h) && w < W * 0.4f && c.n > cube * cube * 0.3f }
+        // group cubes into pieces by PROXIMITY (a wide piece may straddle the 1/3 boundaries), then map groups to the 3 slots
+        val parent = IntArray(good.size) { it }
+        fun find(i: Int): Int { var a = i; while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a] }; return a }
+        val tol = P * 0.6f
+        for (i in good.indices) for (j in i + 1 until good.size) {
+            val a = good[i]; val b = good[j]
+            if (a.x0 - tol <= b.x1 && b.x0 - tol <= a.x1 && a.y0 - tol <= b.y1 && b.y0 - tol <= a.y1) parent[find(i)] = find(j)
+        }
+        val groupsMap = HashMap<Int, ArrayList<Comp>>()
+        for (i in good.indices) groupsMap.getOrPut(find(i)) { ArrayList() }.add(good[i])
+        val groups = groupsMap.values.sortedBy { g -> (g.minOf { it.x0 } + g.maxOf { it.x1 }) / 2f }
         val slots = listOf(ArrayList<Comp>(), ArrayList<Comp>(), ArrayList<Comp>())
-        for (cp in good) slots[minOf(2, (((cp.x0 + cp.x1) / 2f) / (W / 3f)).toInt())].add(cp)
+        if (groups.size <= 3) {
+            for (g in groups) {
+                val cx = (g.minOf { it.x0 } + g.maxOf { it.x1 }) / 2f
+                var si = minOf(2, (cx / (W / 3f)).toInt())
+                while (si < 3 && slots[si].isNotEmpty()) si++
+                if (si > 2) { si = 2; while (si > 0 && slots[si].isNotEmpty()) si-- }
+                slots[si].addAll(g)
+            }
+        } else for (g in groups) slots[minOf(2, (((g.minOf { it.x0 } + g.maxOf { it.x1 }) / 2f) / (W / 3f)).toInt())].addAll(g)
         val kk = maxOf(2, (cube * 0.3f).toInt())
         val tray = ArrayList<TrayPiece?>()
         for (sl in slots) {

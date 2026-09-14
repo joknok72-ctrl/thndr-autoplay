@@ -10,7 +10,8 @@ package com.thndr.autoplay.engine
  *
  * Strategy: maximise the total over the remaining game, not just this move:
  *   immediate points + (multiplier gained × remaining moves × avg base) + oranges parked in nearly complete lines
- *   + board quality/survival weighted by how much is still to be earned.
+ *   + board quality/survival weighted by how much is still to be earned
+ *   + END BONUS: 1000 per cube left on the board when level 25 is completed (so the last moves FILL the board).
  * Weights tuned by self-play simulation under the real rules.
  */
 data class Move(val slot: Int, val r: Int, val c: Int, val points: Int, val lines: Int)
@@ -39,6 +40,8 @@ object AI {
     @JvmField var W_SURV = 2.0         // survival weight
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable
+    @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)
+    @JvmField var END_FADE = 6         // the end-bonus fades in over the last N moves
 
     data class Cfg(val beam: Int, val probes: Int)
     val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 12))
@@ -111,8 +114,12 @@ object AI {
         var bonusPot = 0.0
         if (rem > 3) for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
         val survW = W_SURV * minOf(1.0, rem / 15.0) * (1 + node.mult * 0.15) * 4
-        val deadPen = if (bq.dead > 0 && rem > 0) 400.0 * (1 + node.mult * 0.2) else 0.0
-        return node.pts + multGain + orangePot + bonusPot + bq.q * survW - deadPen
+        // END BONUS: in the last moves keep as many cubes as possible on the board (1000 each at the end) —
+        // but never at the price of dying: the dead-board penalty is 6× stronger in that phase.
+        var endVal = 0.0
+        if (rem < END_FADE) { var cubes = 0; for (i in 0 until N * N) if (node.board[i] != 0) cubes++; val w = 1.0 - rem.toDouble() / END_FADE; endVal = cubes * END_CUBE * w * w }
+        val deadPen = if (bq.dead > 0 && rem > 0) 400.0 * (1 + node.mult * 0.2) * (if (rem < END_FADE) 6 else 1) else 0.0
+        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen
     }
 
     private fun perms(a: List<Int>): List<List<Int>> = if (a.size <= 1) listOf(a) else a.flatMap { x -> perms(a - x).map { listOf(x) + it } }

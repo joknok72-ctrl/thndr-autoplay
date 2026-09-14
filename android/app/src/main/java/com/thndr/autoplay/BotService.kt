@@ -154,10 +154,15 @@ class BotService : Service() {
                     // hide ALL overlay drawings first so the screenshot contains only the game
                     guide?.clear(); overlay?.setHiddenForCapture(true)
                     Thread.sleep(260)
+                    // read TWO frames ~150 ms apart and keep the one whose tray reading agrees (kills mid-animation reads)
                     var bmp = capture(); Thread.sleep(60); bmp = capture() ?: bmp   // take the freshest frame
+                    var scr = try { bmp?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
+                    Thread.sleep(150)
+                    val bmp2 = capture()
+                    val scr2 = try { bmp2?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
+                    if (scr2 != null && (scr == null || scr2.piecesFound > scr.piecesFound || scr2.tray.map { it?.piece?.toString() } != scr.tray.map { it?.piece?.toString() })) scr = scr2
                     overlay?.setHiddenForCapture(false)
                     guide?.setMessage("بقرأ الشاشة وبفكر…"); report("بفكر…")
-                    val scr = try { bmp?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
                     if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
                     lastBoard = scr.boardString()
                     if (scr.piecesFound == 0) { guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }

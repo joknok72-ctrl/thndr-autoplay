@@ -18,7 +18,9 @@
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 2.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
-              bonusKeep: 0.4  // uncovered bonus cells: keep them coverable
+              bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
+              endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
+              endFade: 6      // the end-bonus fades in over the last N moves
             }, global.AI_W || {});
 
   /** Real THNDR scoring. */
@@ -72,7 +74,12 @@
     let bonusPot = 0;
     for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
     const survW = W.surv * Math.min(1, rem / 15) * (1 + node.mult * 0.15) * 4;
-    return node.pts + multGain + orangePot + bonusPot + bq.q * survW - (bq.dead > 0 && rem > 0 ? (W.deadPen||400) * (1 + node.mult*0.2) : 0);
+    // END BONUS: 1000 per cube left on the board after the 75th piece (only if the game is completed).
+    // Fades in over the last W.endFade moves; survival still matters until the very last move.
+    let endVal = 0;
+    if (rem < W.endFade) { let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++; const w = 1 - rem / W.endFade; endVal = cubes * W.endCube * w * w; }
+    const deadPen = (bq.dead > 0 && rem > 0) ? (W.deadPen||400) * (1 + node.mult*0.2) * (rem < W.endFade ? 6 : 1) : 0;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen;
   }
 
   function permutations(arr) { if (arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out; }
