@@ -23,7 +23,7 @@
               endFade: 6,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
-              rollRounds: 3, rollK: 5, rollM: 6, rollLevel: 1, rollMs: 1500   // end-game rollouts (last N rounds)
+              rollRounds: 3, rollK: 5, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
             }, global.AI2_W || global.AI_W || {});
 
   /** Real THNDR scoring. */
@@ -95,7 +95,7 @@
     const mult0 = state.mult || 1; const lvl = Math.min(25, Math.max(1, state.level || 1));
     const remAfterRound = (25 - lvl) * 3;
     const roundsLeft = 25 - lvl;                 // full rounds after this one
-    const deep = !!opts.deep || !!W.deep;
+    const deep = opts.deep !== false && W.deep !== false;
     const rollActive = deep && opts.rollout !== false && W.rollRounds > 0 && roundsLeft >= 0 && roundsLeft < W.rollRounds;
     let best = null; const cands = [];
     for (const order of permutations(slots)) {
@@ -127,13 +127,11 @@
       // same random future for every candidate (common random numbers → fair comparison)
       const futures = [];
       for (let m=0;m<W.rollM;m++) { const f=[]; for (let k=0;k<roundsLeft;k++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; f.push(ps); } futures.push(f); }
-      // interleave futures × candidates so a time budget (W.rollMs) keeps the comparison fair
-      const sums = new Array(top.length).fill(0); let used = 0; const t0 = Date.now();
+      // every candidate is evaluated on ALL futures (no time budget)
+      const sums = new Array(top.length).fill(0); let used = 0;
       for (let m=0;m<futures.length;m++) {
-        if (m > 0 && Date.now() - t0 > W.rollMs) break;
-        const f = futures[m]; const part = new Array(top.length).fill(0); let aborted = false;
+        const f = futures[m]; const part = new Array(top.length).fill(0);
         for (let ci=0; ci<top.length; ci++) {
-          if (m > 0 && Date.now() - t0 > W.rollMs * 1.5) { aborted = true; break; }
           const cand = top[ci];
           let b = cand.board, bo = cand.bonus, mu = cand.mult, pts = cand.pts, dead = false;
           for (let k=0;k<roundsLeft && !dead;k++) {
@@ -144,7 +142,6 @@
           if (!dead) { let cubes = 0; for (let i=0;i<N*N;i++) if (b[i]) cubes++; pts += cubes * 1000; }
           part[ci] = pts;
         }
-        if (aborted) break;
         for (let ci=0; ci<top.length; ci++) sums[ci] += part[ci];
         used++;
       }

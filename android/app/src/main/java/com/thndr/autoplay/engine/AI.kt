@@ -48,7 +48,6 @@ object AI {
     @JvmField var ROLL_K = 5           // candidates re-ranked by rollout
     @JvmField var ROLL_M = 6           // random futures per candidate
     @JvmField var ROLL_LEVEL = 1       // planner level used inside rollouts (fast)
-    @JvmField var ROLL_MS = 2500L      // rollout time budget (ms)
 
     data class Cfg(val beam: Int, val probes: Int)
     val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 12))
@@ -194,11 +193,11 @@ object AI {
     /**
      * @param mult   current multiplier (from the "NX" pill)
      * @param gameLevel current level 1..25 (from the "LEVEL n/25" pill)
-     * @param deep   deeper end-game search (wider beam in the last moves + rollouts). OFF by default = v1.9.0 planning.
+     * @param deep   deeper end-game search (wider beam in the last moves + rollouts). ON by default — identical to the web site.
      * @param rollout end-game rollouts (last ROLL_ROUNDS rounds): re-rank the best candidates by simulating the
      *                remaining rounds with random pieces — same futures for every candidate.
      */
-    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = false, rollout: Boolean = true): Plan {
+    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = true, rollout: Boolean = true): Plan {
         val cfg = LEVELS[level.coerceIn(1, 3)]!!
         val slots = pieces.indices.filter { pieces[it] != null }
         if (slots.isEmpty()) return Plan(emptyList(), 0, false, mult)
@@ -240,13 +239,11 @@ object AI {
                     ps.mapIndexed { i, p -> if (i == oi) Piece(p.cells.mapIndexed { j, c -> if (j == ci) Cell(c.r, c.c, 2) else c }) else p }
                 }
             }
-            // interleave futures × candidates under a time budget (ROLL_MS) so the comparison stays fair
-            val sums = DoubleArray(top.size); var used = 0; val t0 = System.currentTimeMillis()
-            for ((m, f) in futures.withIndex()) {
-                if (m > 0 && System.currentTimeMillis() - t0 > ROLL_MS) break
-                val part = DoubleArray(top.size); var aborted = false
+            // every candidate is evaluated on ALL futures (no time budget — same as the web site)
+            val sums = DoubleArray(top.size); var used = 0
+            for (f in futures) {
+                val part = DoubleArray(top.size)
                 for ((ci, cand) in top.withIndex()) {
-                    if (m > 0 && System.currentTimeMillis() - t0 > ROLL_MS * 1.5) { aborted = true; break }
                     var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
                     for (k in 0 until roundsLeft) {
                         val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
@@ -256,7 +253,6 @@ object AI {
                     if (!dead) pts += bd.count { it != 0 } * END_CUBE
                     part[ci] = pts
                 }
-                if (aborted) break
                 for (ci in top.indices) sums[ci] += part[ci]
                 used++
             }
