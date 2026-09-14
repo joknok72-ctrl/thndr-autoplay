@@ -65,22 +65,73 @@ object ScreenParser {
      *  "50" -> 2 glyphs, "150"/"300"/"500" -> 3 glyphs (150 is the most common), "1K"/"2K" -> 2 glyphs but narrower total.
      * The exact value matters less than "how big" — the AI just needs the ranking.
      */
+    /**
+     * Bonus-cell value OCR. Legal values in THNDR are 50 / 150 / 300 / 500 / 1K / 2K, so the reading is
+     * structural: connected components of grey text inside the cell → digit-shaped ones sharing a baseline.
+     *   3 glyphs → first ∈ {1,3,5} → 150/300/500
+     *   2 glyphs → "50" if the second glyph has a hollow centre (0) or the first is a 5; else "1K"/"2K"
+     *   otherwise → 50 (safe default: never over-estimate an unreadable cell).
+     */
     private fun estimateBonus(px: IntArray, W: Int, H: Int, cx: Int, cy: Int, pitch: Float, cellBg: Int, cellLum: Int): Int {
-        val k = (pitch * 0.44f).toInt()
-        val x0 = maxOf(0, cx - k); val x1 = minOf(W - 1, cx + k); val y0 = maxOf(0, cy - k); val y1 = minOf(H - 1, cy + k)
-        val colP = IntArray(x1 - x0 + 1); var total = 0
-        for (y in y0..y1) for (x in x0..x1) { val p = px[y * W + x]; if (mx(p) > cellLum + 50 && sat(p) < 90 && dist(p, cellBg) > 90) { colP[x - x0]++; total++ } }
-        var runs = 0; var on = false; var width = 0; var first = -1; var last = -1
-        for (i in colP.indices) { val v = colP[i] > 0; if (v) { if (first < 0) first = i; last = i; width++ }; if (v && !on) runs++; on = v }
-        if (total < 6) return 50
-        val span = if (first >= 0) (last - first + 1) / pitch else 0f
-        return when {
-            runs >= 3 -> if (span > 0.62f) 300 else 150     // 3 digits
-            span < 0.36f -> 1000                              // "1K" is narrow (thin 1 + K)
+        val half = (pitch * 0.5f).toInt()
+        val x0 = maxOf(0, cx - half); val y0 = maxOf(0, cy - half)
+        val x1 = minOf(W - 1, cx + half); val y1 = minOf(H - 1, cy + half)
+        val w = x1 - x0 + 1; val h = y1 - y0 + 1
+        if (w < 12 || h < 12) return 50
+        val pad = (w * 0.08f).toInt()
+        val m = BooleanArray(w * h) { i ->
+            val yy = i / w; val xx = i % w
+            if (yy < pad || yy >= h - pad || xx < pad || xx >= w - pad) false else {
+                val p = px[(y0 + yy) * W + x0 + xx]
+                mx(p) > cellLum + 50 && sat(p) < 90 && dist(p, cellBg) > 90
+            }
+        }
+        // connected components (4-neighbour)
+        val lab = IntArray(w * h); val stack = IntArray(w * h + 1); var n = 0
+        class C(val id: Int, var x0: Int, var y0: Int, var x1: Int, var y1: Int)
+        val comps = ArrayList<C>()
+        for (s in 0 until w * h) {
+            if (!m[s] || lab[s] != 0) continue
+            n++; var sp = 0; stack[sp++] = s; lab[s] = n
+            val c = C(n, s % w, s / w, s % w, s / w)
+            while (sp > 0) {
+                val j = stack[--sp]; val jy = j / w; val jx = j % w
+                if (jx < c.x0) c.x0 = jx; if (jx > c.x1) c.x1 = jx; if (jy < c.y0) c.y0 = jy; if (jy > c.y1) c.y1 = jy
+                if (jy > 0 && m[j - w] && lab[j - w] == 0) { lab[j - w] = n; stack[sp++] = j - w }
+                if (jy < h - 1 && m[j + w] && lab[j + w] == 0) { lab[j + w] = n; stack[sp++] = j + w }
+                if (jx > 0 && m[j - 1] && lab[j - 1] == 0) { lab[j - 1] = n; stack[sp++] = j - 1 }
+                if (jx < w - 1 && m[j + 1] && lab[j + 1] == 0) { lab[j + 1] = n; stack[sp++] = j + 1 }
+            }
+            val gh = c.y1 - c.y0 + 1; val gw = c.x1 - c.x0 + 1; val cyf = (c.y0 + c.y1) / 2f / h
+            if (gh >= h * 0.22f && gh <= h * 0.5f && gw >= 3 && gw <= gh * 1.15f && cyf > 0.3f && cyf < 0.7f) comps.add(c)
+        }
+        if (comps.isEmpty()) return 50
+        comps.sortBy { it.x0 }
+        var best: List<C> = emptyList()
+        for (a in comps) {
+            val grp = comps.filter { b -> minOf(a.y1, b.y1) - maxOf(a.y0, b.y0) > 0.6f * (a.y1 - a.y0) }
+            if (grp.size > best.size) best = grp
+        }
+        fun glyphOf(c: C): Glyph {
+            val gw = c.x1 - c.x0 + 1; val gh = c.y1 - c.y0 + 1
+            return Glyph(BooleanArray(gw * gh) { lab[(c.y0 + it / gw) * w + c.x0 + it % gw] == c.id }, gw, gh)
+        }
+        fun hollow(g: Glyph): Boolean {
+            var on = 0; var tot = 0
+            for (yy in (g.gh * 0.35f).toInt()..(g.gh * 0.65f).toInt()) for (xx in (g.gw * 0.3f).toInt()..(g.gw * 0.7f).toInt()) {
+                if (yy < g.gh && xx < g.gw) { tot++; if (g.bits[yy * g.gw + xx]) on++ }
+            }
+            return tot > 0 && on < 0.25f * tot
+        }
+        return when (best.size) {
+            3 -> when (readGlyphAmong(glyphOf(best[0]), "135")) { '1' -> 150; '3' -> 300; else -> 500 }
+            2 -> {
+                val first = readGlyphAmong(glyphOf(best[0]), "125")
+                if (first == '5' || hollow(glyphOf(best[1]))) 50 else if (first == '1') 1000 else 2000
+            }
             else -> 50
         }
     }
-
 
     // ---------- HUD text (multiplier "NX" pill bottom-left, "LEVEL n/25" pill bottom-right) ----------
     // 7x12 grey-level templates (0..3 per cell) learned from 34 real screenshots; nearest-template matching.
@@ -132,6 +183,24 @@ object ScreenParser {
         }
         var best = '?'; var bestD = Float.MAX_VALUE
         for ((ch, t) in GLYPHS) { var d = 0f; for (i in v.indices) d += abs(v[i] - t[i]); if (d < bestD) { bestD = d; best = ch } }
+        return best
+    }
+    private fun glyphVec(g: Glyph): FloatArray {
+        val v = FloatArray(GW * GH)
+        for (yy in 0 until GH) for (xx in 0 until GW) {
+            val sx0 = (xx * g.gw / GW.toFloat()).toInt(); val sx1 = (xx + 1) * g.gw / GW.toFloat()
+            val sy0 = (yy * g.gh / GH.toFloat()).toInt(); val sy1 = (yy + 1) * g.gh / GH.toFloat()
+            var sum = 0f; var cnt = 0f
+            var y = sy0; while (y < sy1 && y < g.gh) { var x = sx0; while (x < sx1 && x < g.gw) { if (g.bits[y * g.gw + x]) sum++; cnt++; x++ }; y++ }
+            v[yy * GW + xx] = if (cnt > 0) sum / cnt else 0f
+        }
+        return v
+    }
+    /** Nearest template restricted to [chars]. */
+    private fun readGlyphAmong(g: Glyph, chars: String): Char {
+        val v = glyphVec(g)
+        var best = chars[0]; var bestD = Float.MAX_VALUE
+        for (ch in chars) { val t = GLYPHS[ch] ?: continue; var d = 0f; for (i in v.indices) d += abs(v[i] - t[i]); if (d < bestD) { bestD = d; best = ch } }
         return best
     }
     /** Returns (mult, level) or (0,0) parts when unreadable. */
