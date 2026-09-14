@@ -131,12 +131,12 @@ object ScreenParser {
             return tot > 0 && on > 0.5f * tot
         }
         // strict structural rules — an unreadable/ambiguous cell is ALWAYS 50 (never over-estimate)
-        val n = best.size
-        if (n < 2 || n > 3) return 50
+        val ng = best.size
+        if (ng < 2 || ng > 3) return 50
         val hs = best.map { it.y1 - it.y0 + 1 }; val ws = best.map { it.x1 - it.x0 + 1 }
         if (hs.max() > hs.min() * 1.2f) return 50                       // digits share one height
-        val ar = FloatArray(n) { ws[it].toFloat() / hs[it] }
-        if (n == 3) {
+        val ar = FloatArray(ng) { ws[it].toFloat() / hs[it] }
+        if (ng == 3) {
             // 150 / 300 / 500: 2nd & 3rd glyphs are wide, last one is a hollow 0
             if (ar[1] < 0.55f || ar[1] > 0.95f || ar[2] < 0.55f || ar[2] > 0.95f || !hollow(glyphOf(best[2]))) return 50
             val c = readGlyphAmong(glyphOf(best[0]), "135")
