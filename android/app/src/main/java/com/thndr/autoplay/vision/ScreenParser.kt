@@ -192,10 +192,10 @@ object ScreenParser {
             if (cand.size >= 10) { cube = cand[cand.size / 2].toFloat(); P = cube / 0.885f }
         }
         val gap = P - cube
-        val k = maxOf(1, (cube * 0.12f).toInt())
+        val ek = maxOf(1, (cube * 0.12f).toInt())
         val er = BooleanArray(W * th) { i ->
             val y = i / W; val x = i % W
-            m[i] && y - k >= 0 && y + k < th && x - k >= 0 && x + k < W && m[(y - k) * W + x] && m[(y + k) * W + x] && m[y * W + x - k] && m[y * W + x + k]
+            m[i] && y - ek >= 0 && y + ek < th && x - ek >= 0 && x + ek < W && m[(y - ek) * W + x] && m[(y + ek) * W + x] && m[y * W + x - ek] && m[y * W + x + ek]
         }
         val lab = IntArray(W * th)
         class Comp(var y0: Int, var y1: Int, var x0: Int, var x1: Int, var n: Int)
@@ -213,7 +213,7 @@ object ScreenParser {
                 if (jx > 0) { val n2 = j - 1; if (er[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
                 if (jx < W - 1) { val n2 = j + 1; if (er[n2] && lab[n2] == 0) { lab[n2] = labN; stack[sp++] = n2 } }
             }
-            comp.y0 -= k; comp.y1 += k; comp.x0 -= k; comp.x1 += k   // undo the erosion
+            comp.y0 -= ek; comp.y1 += ek; comp.x0 -= ek; comp.x1 += ek   // undo the erosion
             comps.add(comp)
         }
         fun fits(d: Int): Boolean { for (n in 1..5) if (abs(d - (n * P - gap)) <= P * 0.3f) return true; return false }
