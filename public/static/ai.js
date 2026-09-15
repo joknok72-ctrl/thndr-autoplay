@@ -22,7 +22,7 @@
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3, orangeMode: 0,    // oranges parked in near-complete lines (fraction of full mult value)
-              bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
+              bonusKeep: 0.4, farm: 0, farmRate: 0.33, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
@@ -97,8 +97,27 @@
         orangePot += rem * W.kMult * W.orange * prog * prog;
       }
     }
+    // BONUS CELLS: an uncovered cell is worth (value × mult) when eventually covered. REAL RULE: while 3 cells sit on the
+    // board and none is covered during a round, one of them grows a tier each level (50→150→300→500→1K→2K).
+    // farm > 0 turns on "bonus farming": value uncovered cells by their expected future value — they grow and the
+    // multiplier grows, so covering later is worth more — as long as enough moves remain to cash them in.
     let bonusPot = 0;
-    for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
+    const TIER = [50,150,300,500,1000,2000];
+    let nB = 0; for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) nB++;
+    for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) {
+      if (W.farm > 0) {
+        const v = node.bonus[i]; const t = Math.max(0, TIER.indexOf(v));
+        // rounds left after this one; expected tier steps while farming ≈ (rounds × P(grow)/3 cells)  — capped
+        const roundsLeft = rem / 3;
+        const steps = nB >= 3 ? Math.min(TIER.length - 1 - t, roundsLeft * (W.farmRate||0.33)) : 0;
+        const fut = t + steps; const lo = Math.floor(fut), hi = Math.min(TIER.length-1, lo+1); const fv = TIER[lo] + (TIER[hi]-TIER[lo])*(fut-lo);
+        const multFut = node.mult + Math.min(roundsLeft, 25) * 0.8;      // multiplier keeps growing ~0.8/round
+        const cash = rem >= 3 ? 1 : 0;                                   // must still have moves to cover it
+        bonusPot += fv * multFut * W.farm * cash * (W.bonusKeep > 0 ? 1 : 1) * 0.3;
+      } else {
+        bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
+      }
+    }
     const survW = W.surv * Math.max(W.survFloor||0, Math.min(1, rem / 15)) * (1 + node.mult * 0.15) * 4;
     // DYING = losing everything still to come (remaining moves × mult × ~12 pts) AND the 1000/cube end bonus.
     // survivability: (1-cover) is the chance the next dealt piece has NO place at all.

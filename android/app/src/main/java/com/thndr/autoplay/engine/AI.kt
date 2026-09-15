@@ -40,7 +40,10 @@ object AI {
     @JvmField var K_MULT = 18.0        // value of +1 multiplier per remaining move
     @JvmField var W_SURV = 4.0         // survival weight (re-tuned on the REAL piece distribution: 0 deaths / 20 games)
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
-    @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable
+    @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
+    @JvmField var W_FARM = 1.0         // bonus farming weight (measured: 77.8K → 125.6K on the realistic sim)
+    @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
+    private val TIER = intArrayOf(50, 150, 300, 500, 1000, 2000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 0.3
     @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
@@ -130,8 +133,22 @@ object AI {
             val prog = maxOf(bq.rf[r], bq.cf[c], bq.bf[b]) / 9.0
             orangePot += rem * K_MULT * W_ORANGE * prog * prog
         }
+        // BONUS CELLS — REAL RULE (measured on 6 logged games): while 3 cells sit on the board and none is covered during a
+        // round, one of them grows a tier each level (50→150→300→500→1K→2K). "Farming": value uncovered cells by their
+        // expected FUTURE value (they grow, and the multiplier grows) as long as enough moves remain to cash them in.
         var bonusPot = 0.0
-        if (rem > 3) for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
+        var nB = 0; for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) nB++
+        for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) {
+            if (W_FARM > 0) {
+                val t = maxOf(0, TIER.indexOf(node.bonus[i]))
+                val roundsLeft = rem / 3.0
+                val steps = if (nB >= 3) minOf((TIER.size - 1 - t).toDouble(), roundsLeft * FARM_RATE) else 0.0
+                val fut = t + steps; val lo = fut.toInt().coerceIn(0, TIER.size - 1); val hi = minOf(TIER.size - 1, lo + 1)
+                val fv = TIER[lo] + (TIER[hi] - TIER[lo]) * (fut - lo)
+                val multFut = node.mult + minOf(roundsLeft, 25.0) * 0.8
+                if (rem >= 3) bonusPot += fv * multFut * W_FARM * 0.3
+            } else if (rem > 3) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
+        }
         val survW = W_SURV * minOf(1.0, rem / 15.0) * (1 + node.mult * 0.15) * 4
         // END BONUS: in the last moves keep as many cubes as possible on the board (1000 each at the end) —
         // but never at the price of dying: the dead-board penalty is 6× stronger in that phase.
