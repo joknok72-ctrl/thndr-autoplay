@@ -108,6 +108,9 @@
   /** plan(board, bonus, pieces[3], state{mult, level}, opts{level}) */
   function plan(board, bonus, pieces, state, opts) {
     opts = opts || {}; const cfg = LEVELS[opts.level||3] || LEVELS[3];
+    // strategy knobs (per call): fill horizon (moves) and clean-board style
+    if (opts.fillMoves) W.endFade = Math.max(3, Math.min(15, +opts.fillMoves));
+    if (opts.clean !== undefined) W.clean = opts.clean ? 1 : 0;
     const slots = pieces.map((p,i)=>p?i:-1).filter(i=>i>=0);
     if (!slots.length) return { moves: [], total: 0, gameOver: false };
     const mult0 = state.mult || 1; const lvl = Math.min(25, Math.max(1, state.level || 1));

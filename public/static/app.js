@@ -9,7 +9,7 @@
   const THEMES = ['blue', 'purple', 'green', 'dark'];
 
   // ---------- Settings & stats ----------
-  const settings = Object.assign({ aiLevel: 3, speed: 2, bonusMode: 'cover', growth: 1, autoPlay: 0, sound: 1, haptics: 1, theme: 'blue' }, load('thndr-settings') || {});
+  const settings = Object.assign({ aiLevel: 3, fillLevels: 3, clean: 0, speed: 2, bonusMode: 'cover', growth: 1, autoPlay: 0, sound: 1, haptics: 1, theme: 'blue' }, load('thndr-settings') || {});
   const stats = Object.assign({ best: 0, lines: 0, games: 0, wins: 0 }, load('thndr-stats') || {});
   function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
   function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -220,7 +220,7 @@
   let worker = null, reqId = 0;
   function getWorker() { if (worker) return worker; try { worker = new Worker('/static/ai-worker.js?v=3'); } catch { worker = null; } return worker; }
   function runAI(pieces) {
-    const payload = { board: S.board, bonus: S.bonus, pieces, state: { streak: S.streak, mult: S.mult, level: S.level }, opts: { level: settings.aiLevel, bonusMode: settings.bonusMode } };
+    const payload = { board: S.board, bonus: S.bonus, pieces, state: { streak: S.streak, mult: S.mult, level: S.level }, opts: { level: settings.aiLevel, bonusMode: settings.bonusMode, fillMoves: settings.fillLevels * 3, clean: settings.clean } };
     const w = getWorker();
     if (!w) return Promise.resolve(window.AI.plan(board(), S.bonus.slice(), pieces, payload.state, payload.opts));
     return new Promise((res, rej) => {

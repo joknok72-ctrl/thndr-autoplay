@@ -142,6 +142,10 @@ app.get('/', (c) => {
     <div class="settings">
       <div class="set-row"><label>قوة الذكاء الاصطناعي</label>
         <div class="seg" data-set="aiLevel"><button data-v="1">سريع</button><button data-v="2">قوي</button><button data-v="3">أقصى</button></div></div>
+      <div class="set-row"><label>ملء اللوحة في النهاية (كل مكعب باقي = 1000)</label>
+        <div class="seg" data-set="fillLevels"><button data-v="2">آخر لفلين</button><button data-v="3">آخر 3</button><button data-v="4">آخر 4</button><button data-v="5">آخر 5</button></div></div>
+      <div class="set-row"><label>أسلوب «اللوحة الفاضية» (امسح كتير قبل الملء)</label>
+        <div class="seg" data-set="clean"><button data-v="0">إيقاف</button><button data-v="1">تشغيل</button></div></div>
       <div class="set-row"><label>سرعة الأنيميشن</label>
         <div class="seg" data-set="speed"><button data-v="1">بطيء</button><button data-v="2">عادي</button><button data-v="3">سريع</button></div></div>
       <div class="set-row"><label>مكافأة الرقم تُحسب</label>
