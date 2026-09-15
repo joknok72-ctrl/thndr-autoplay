@@ -18,19 +18,20 @@ data class Move(val slot: Int, val r: Int, val c: Int, val points: Int, val line
 data class Plan(val moves: List<Move>, val total: Int, val gameOver: Boolean, val finalMult: Int = 1)
 
 object AI {
+    // probes = pieces that actually occur in the real game (no 3x3 / 5-long bars — they are never dealt)
     private val PROBES: List<Pair<Piece, Double>> = listOf(
-        Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 0, 1 to 1, 1 to 2, 2 to 0, 2 to 1, 2 to 2) to 3.5,
-        Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3, 0 to 4) to 2.0,
-        Engine.shape(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0) to 2.0,
-        Engine.shape(0 to 0, 0 to 1, 1 to 0, 1 to 1) to 1.5,
-        Engine.shape(0 to 0, 1 to 0, 2 to 0, 2 to 1, 2 to 2) to 1.5,
-        Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 1) to 1.0,
-        Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3) to 1.0,
-        Engine.shape(0 to 0, 1 to 0, 2 to 0, 3 to 0) to 1.0,
-        Engine.shape(0 to 0, 1 to 0, 1 to 1) to 0.6,
-        Engine.shape(0 to 0, 0 to 1, 0 to 2) to 0.6,
-        Engine.shape(0 to 0, 1 to 0, 2 to 0) to 0.6,
-        Engine.shape(0 to 1, 1 to 0, 1 to 1, 1 to 2, 2 to 1) to 1.0,
+        Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 1, 2 to 1) to 2.0,   // T5a
+        Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 2, 2 to 2) to 1.5,   // Lbig3
+        Engine.shape(0 to 0, 0 to 2, 1 to 0, 1 to 1, 1 to 2) to 1.5,   // U1
+        Engine.shape(0 to 1, 1 to 0, 1 to 1, 1 to 2, 2 to 1) to 1.5,   // plus
+        Engine.shape(0 to 0, 0 to 1, 0 to 2, 1 to 1) to 1.0,           // T4a
+        Engine.shape(0 to 1, 1 to 1, 2 to 0, 2 to 1) to 1.0,           // J4a
+        Engine.shape(0 to 0, 0 to 1, 0 to 2, 0 to 3) to 1.0,           // i4
+        Engine.shape(0 to 1, 0 to 2, 1 to 0, 1 to 1) to 1.0,           // S4a
+        Engine.shape(0 to 0, 0 to 1, 1 to 0, 1 to 1) to 1.0,           // sq2
+        Engine.shape(0 to 0, 1 to 0, 2 to 0, 3 to 0) to 1.0,           // v4
+        Engine.shape(0 to 0, 1 to 0, 1 to 1) to 0.6,                   // l3a
+        Engine.shape(0 to 0, 0 to 1, 0 to 2) to 0.6,                   // i3
     )
     // board-quality weights
     private const val W_EMPTY = 1.0; private const val W_HOLES = 5.0; private const val W_TRANS = 0.9; private const val W_NEAR = 1.6
@@ -128,63 +129,68 @@ object AI {
         return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen
     }
 
-    // ---- piece library (same as the web engine) — used for end-game rollouts ----
-    private val LIB: List<Pair<String, IntArray>> = listOf(
-        "dot" to intArrayOf(0,0),
-        "i2" to intArrayOf(0,0, 0,1),
-        "v2" to intArrayOf(0,0, 1,0),
-        "i3" to intArrayOf(0,0, 0,1, 0,2),
-        "v3" to intArrayOf(0,0, 1,0, 2,0),
-        "i4" to intArrayOf(0,0, 0,1, 0,2, 0,3),
-        "v4" to intArrayOf(0,0, 1,0, 2,0, 3,0),
-        "i5" to intArrayOf(0,0, 0,1, 0,2, 0,3, 0,4),
-        "v5" to intArrayOf(0,0, 1,0, 2,0, 3,0, 4,0),
-        "sq2" to intArrayOf(0,0, 0,1, 1,0, 1,1),
-        "l3a" to intArrayOf(0,0, 1,0, 1,1),
-        "l3b" to intArrayOf(0,0, 0,1, 1,0),
-        "l3c" to intArrayOf(0,0, 0,1, 1,1),
-        "l3d" to intArrayOf(0,1, 1,0, 1,1),
-        "L4a" to intArrayOf(0,0, 1,0, 2,0, 2,1),
-        "L4b" to intArrayOf(0,0, 0,1, 1,0, 2,0),
-        "L4c" to intArrayOf(0,0, 0,1, 0,2, 1,0),
-        "L4d" to intArrayOf(0,2, 1,0, 1,1, 1,2),
-        "J4a" to intArrayOf(0,1, 1,1, 2,0, 2,1),
-        "J4b" to intArrayOf(0,0, 1,0, 1,1, 1,2),
-        "J4c" to intArrayOf(0,0, 0,1, 1,1, 2,1),
-        "J4d" to intArrayOf(0,0, 0,1, 0,2, 1,2),
-        "T4a" to intArrayOf(0,0, 0,1, 0,2, 1,1),
-        "T4b" to intArrayOf(0,1, 1,0, 1,1, 1,2),
-        "T4c" to intArrayOf(0,0, 1,0, 1,1, 2,0),
-        "T4d" to intArrayOf(0,1, 1,0, 1,1, 2,1),
-        "S4a" to intArrayOf(0,1, 0,2, 1,0, 1,1),
-        "S4b" to intArrayOf(0,0, 1,0, 1,1, 2,1),
-        "Z4a" to intArrayOf(0,0, 0,1, 1,1, 1,2),
-        "Z4b" to intArrayOf(0,1, 1,0, 1,1, 2,0),
-        "Lbig1" to intArrayOf(0,0, 1,0, 2,0, 2,1, 2,2),
-        "Lbig2" to intArrayOf(0,0, 0,1, 0,2, 1,0, 2,0),
-        "Lbig3" to intArrayOf(0,0, 0,1, 0,2, 1,2, 2,2),
-        "Lbig4" to intArrayOf(0,2, 1,2, 2,0, 2,1, 2,2),
-        "plus" to intArrayOf(0,1, 1,0, 1,1, 1,2, 2,1),
-        "U1" to intArrayOf(0,0, 0,2, 1,0, 1,1, 1,2),
-        "U2" to intArrayOf(0,0, 0,1, 0,2, 1,0, 1,2),
-        "U3" to intArrayOf(0,0, 0,1, 1,0, 2,0, 2,1),
-        "U4" to intArrayOf(0,0, 0,1, 1,1, 2,0, 2,1),
-        "d2a" to intArrayOf(0,1, 1,0),
-        "d2b" to intArrayOf(0,0, 1,1),
-        "d3a" to intArrayOf(0,2, 1,1, 2,0),
-        "d3b" to intArrayOf(0,0, 1,1, 2,2),
-        "stair" to intArrayOf(0,2, 1,1, 1,2, 2,0, 2,1),
-        "rect23" to intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2),
-        "rect32" to intArrayOf(0,0, 0,1, 1,0, 1,1, 2,0, 2,1),
-        "sq3" to intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2, 2,0, 2,1, 2,2),
+    // ---- piece library with the REAL deal distribution (96 pieces observed across two full games; big 3x3 / 5-bars never appear) ----
+    private val LIB: List<Triple<String, Double, IntArray>> = listOf(
+        Triple("dot", 1.0, intArrayOf(0,0)),
+        Triple("i2", 4.0, intArrayOf(0,0, 0,1)),
+        Triple("v2", 2.5, intArrayOf(0,0, 1,0)),
+        Triple("i3", 3.0, intArrayOf(0,0, 0,1, 0,2)),
+        Triple("v3", 3.0, intArrayOf(0,0, 1,0, 2,0)),
+        Triple("i4", 3.0, intArrayOf(0,0, 0,1, 0,2, 0,3)),
+        Triple("v4", 1.5, intArrayOf(0,0, 1,0, 2,0, 3,0)),
+        Triple("i5", 0.0, intArrayOf(0,0, 0,1, 0,2, 0,3, 0,4)),
+        Triple("v5", 0.0, intArrayOf(0,0, 1,0, 2,0, 3,0, 4,0)),
+        Triple("sq2", 3.0, intArrayOf(0,0, 0,1, 1,0, 1,1)),
+        Triple("l3a", 2.0, intArrayOf(0,0, 1,0, 1,1)),
+        Triple("l3b", 2.0, intArrayOf(0,0, 0,1, 1,0)),
+        Triple("l3c", 2.0, intArrayOf(0,0, 0,1, 1,1)),
+        Triple("l3d", 1.5, intArrayOf(0,1, 1,0, 1,1)),
+        Triple("L4a", 1.0, intArrayOf(0,0, 1,0, 2,0, 2,1)),
+        Triple("L4b", 2.0, intArrayOf(0,0, 0,1, 1,0, 2,0)),
+        Triple("L4c", 1.0, intArrayOf(0,0, 0,1, 0,2, 1,0)),
+        Triple("L4d", 1.0, intArrayOf(0,2, 1,0, 1,1, 1,2)),
+        Triple("J4a", 5.0, intArrayOf(0,1, 1,1, 2,0, 2,1)),
+        Triple("J4b", 1.0, intArrayOf(0,0, 1,0, 1,1, 1,2)),
+        Triple("J4c", 1.0, intArrayOf(0,0, 0,1, 1,1, 2,1)),
+        Triple("J4d", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,2)),
+        Triple("T4a", 5.0, intArrayOf(0,0, 0,1, 0,2, 1,1)),
+        Triple("T4b", 1.5, intArrayOf(0,1, 1,0, 1,1, 1,2)),
+        Triple("T4c", 1.0, intArrayOf(0,0, 1,0, 1,1, 2,0)),
+        Triple("T4d", 2.0, intArrayOf(0,1, 1,0, 1,1, 2,1)),
+        Triple("S4a", 4.0, intArrayOf(0,1, 0,2, 1,0, 1,1)),
+        Triple("S4b", 1.0, intArrayOf(0,0, 1,0, 1,1, 2,1)),
+        Triple("Z4a", 2.0, intArrayOf(0,0, 0,1, 1,1, 1,2)),
+        Triple("Z4b", 3.0, intArrayOf(0,1, 1,0, 1,1, 2,0)),
+        Triple("Lbig1", 1.0, intArrayOf(0,0, 1,0, 2,0, 2,1, 2,2)),
+        Triple("Lbig2", 2.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 2,0)),
+        Triple("Lbig3", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,2, 2,2)),
+        Triple("Lbig4", 2.0, intArrayOf(0,2, 1,2, 2,0, 2,1, 2,2)),
+        Triple("plus", 3.0, intArrayOf(0,1, 1,0, 1,1, 1,2, 2,1)),
+        Triple("U1", 4.0, intArrayOf(0,0, 0,2, 1,0, 1,1, 1,2)),
+        Triple("U2", 1.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,2)),
+        Triple("U3", 1.0, intArrayOf(0,0, 0,1, 1,0, 2,0, 2,1)),
+        Triple("U4", 1.0, intArrayOf(0,0, 0,1, 1,1, 2,0, 2,1)),
+        Triple("d2a", 1.0, intArrayOf(0,1, 1,0)),
+        Triple("d2b", 4.0, intArrayOf(0,0, 1,1)),
+        Triple("d3a", 2.0, intArrayOf(0,2, 1,1, 2,0)),
+        Triple("d3b", 2.0, intArrayOf(0,0, 1,1, 2,2)),
+        Triple("stair", 0.0, intArrayOf(0,2, 1,1, 1,2, 2,0, 2,1)),
+        Triple("rect23", 0.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2)),
+        Triple("rect32", 0.0, intArrayOf(0,0, 0,1, 1,0, 1,1, 2,0, 2,1)),
+        Triple("sq3", 0.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2, 2,0, 2,1, 2,2)),
+        Triple("T5a", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,1, 2,1)),
+        Triple("T5b", 3.0, intArrayOf(0,2, 1,0, 1,1, 1,2, 2,2)),
+        Triple("T5c", 2.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,0)),
+        Triple("T5d", 2.0, intArrayOf(0,1, 1,1, 2,0, 2,1, 2,2)),
+        Triple("S5a", 1.0, intArrayOf(0,1, 0,2, 1,1, 2,0, 2,1)),
+        Triple("S5b", 1.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,2)),
+        Triple("d4", 1.0, intArrayOf(0,0, 1,1, 2,2, 3,3)),
     )
     fun randomPiece(rng: java.util.Random): Piece {
-        var total = 0.0
-        val ws = LIB.map { (k, _) -> if (k == "sq3" || k == "i5" || k == "v5") 0.35 else if (k == "dot") 0.6 else 1.0 }
-        for (w in ws) total += w
+        var total = 0.0; for (t in LIB) total += t.second
         var x = rng.nextDouble() * total; var pick = LIB[0]
-        for (i in LIB.indices) { x -= ws[i]; if (x <= 0) { pick = LIB[i]; break } }
-        val a = pick.second
+        for (t in LIB) { x -= t.second; if (x <= 0 && t.second > 0) { pick = t; break } }
+        val a = pick.third
         return Piece((0 until a.size / 2).map { Cell(a[it * 2], a[it * 2 + 1], 1) })
     }
 

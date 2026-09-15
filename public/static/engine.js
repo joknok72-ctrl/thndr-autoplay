@@ -24,8 +24,11 @@
     d2a: [[0,1],[1,0]], d2b: [[0,0],[1,1]], d3a: [[0,2],[1,1],[2,0]], d3b: [[0,0],[1,1],[2,2]],
     stair: [[0,2],[1,1],[1,2],[2,0],[2,1]],
     rect23: [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2]], rect32: [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]],
+    // shapes observed in the REAL game (74-frame + 26-frame analyses): long-stem T (4 rotations), 5-cell S/Z, 4-diagonal
+    T5a: [[0,0],[0,1],[0,2],[1,1],[2,1]], T5b: [[0,2],[1,0],[1,1],[1,2],[2,2]], T5c: [[0,0],[1,0],[1,1],[1,2],[2,0]], T5d: [[0,1],[1,1],[2,0],[2,1],[2,2]],
+    S5a: [[0,1],[0,2],[1,1],[2,0],[2,1]], S5b: [[0,0],[1,0],[1,1],[1,2],[2,2]], d4: [[0,0],[1,1],[2,2],[3,3]],
   };
-  const LIB_ORDER = ['dot','i2','v2','i3','v3','i4','v4','i5','v5','sq2','l3a','l3b','l3c','l3d','L4a','L4b','L4c','L4d','J4a','J4b','J4c','J4d','T4a','T4b','T4c','T4d','S4a','S4b','Z4a','Z4b','Lbig1','Lbig2','Lbig3','Lbig4','plus','U1','U2','U3','U4','d2a','d2b','d3a','d3b','stair','rect23','rect32','sq3'];
+  const LIB_ORDER = ['dot','i2','v2','i3','v3','i4','v4','i5','v5','sq2','l3a','l3b','l3c','l3d','L4a','L4b','L4c','L4d','J4a','J4b','J4c','J4d','T4a','T4b','T4c','T4d','S4a','S4b','Z4a','Z4b','Lbig1','Lbig2','Lbig3','Lbig4','plus','U1','U2','U3','U4','d2a','d2b','d3a','d3b','stair','rect23','rect32','sq3','T5a','T5b','T5c','T5d','S5a','S5b','d4'];
 
   function makePiece(shapeKey, opts) {
     const cells = SHAPES[shapeKey].map(([r,c]) => ({ r, c, v: 1 }));
@@ -43,9 +46,14 @@
   function rotate(p) { const h = p.h; return normalize({ ...p, cells: p.cells.map(c => ({ r: c.c, c: h - 1 - c.r, v: c.v })) }); }
   function flip(p) { const w = p.w; return normalize({ ...p, cells: p.cells.map(c => ({ r: c.r, c: w - 1 - c.c, v: c.v })) }); }
 
+  const REAL_W = { dot: 1, i2: 4, v2: 2.5, i3: 3, v3: 3, i4: 3, v4: 1.5, sq2: 3, l3a: 2, l3b: 2, l3c: 2, l3d: 1.5,
+    L4a: 1, L4b: 2, L4c: 1, L4d: 1, J4a: 5, J4b: 1, J4c: 1, J4d: 3, T4a: 5, T4b: 1.5, T4c: 1, T4d: 2, S4a: 4, S4b: 1, Z4a: 2, Z4b: 3,
+    Lbig1: 1, Lbig2: 2, Lbig3: 3, Lbig4: 2, plus: 3, U1: 4, U2: 1, U3: 1, U4: 1, d2a: 1, d2b: 4, d3a: 2, d3b: 2,
+    T5a: 3, T5b: 3, T5c: 2, T5d: 2, S5a: 1, S5b: 1, d4: 1 };
   function randomPiece(rng) {
     rng = rng || Math.random;
-    const weights = LIB_ORDER.map(k => (k==='sq3'||k==='i5'||k==='v5') ? 0.35 : (k==='dot' ? 0.6 : 1));
+    // REAL distribution (96 pieces observed across two full games). sq3 / i5 / v5 / 2x3 rects / stair were NEVER dealt.
+    const weights = LIB_ORDER.map(k => REAL_W[k] || 0);
     const total = weights.reduce((a,b)=>a+b,0); let x = rng()*total, key = LIB_ORDER[0];
     for (let i=0;i<weights.length;i++){ x -= weights[i]; if (x<=0){ key = LIB_ORDER[i]; break; } }
     const p = makePiece(key);

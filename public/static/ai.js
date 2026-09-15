@@ -11,8 +11,9 @@
 (function (global) {
   'use strict';
   const E = global.Engine; const N = E.N; const idx = E.idx;
-  const PROBES = ['sq3','i5','v5','sq2','Lbig1','T4a','i4','v4','l3a','i3','v3','plus'].map(k => E.makePiece(k));
-  const PROBE_W = { sq3: 3.5, i5: 2, v5: 2, sq2: 1.5, Lbig1: 1.5, T4a: 1, i4: 1, v4: 1, l3a: .6, i3: .6, v3: .6, plus: 1 };
+  // probes = pieces that actually occur in the real game (no 3x3 / 5-long bars — they are never dealt)
+  const PROBES = ['T5a','Lbig3','U1','plus','T4a','J4a','i4','S4a','sq2','v4','l3a','i3'].map(k => E.makePiece(k));
+  const PROBE_W = { T5a: 2, Lbig3: 1.5, U1: 1.5, plus: 1.5, T4a: 1, J4a: 1, i4: 1, S4a: 1, sq2: 1, v4: 1, l3a: .6, i3: .6 };
   const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
