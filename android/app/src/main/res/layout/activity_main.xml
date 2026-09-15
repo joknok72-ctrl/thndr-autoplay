@@ -21,6 +21,10 @@
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) الإعدادات" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <CheckBox android:id="@+id/chkConfirm" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="مراجعة القطع قبل الخطة (افتراضي: إيقاف — الخطة تظهر فورًا)"/>
     <CheckBox android:id="@+id/chkDeep" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="بحث أعمق في آخر 3 لفلات — زي الموقع بالضبط (افتراضي: تشغيل)"/>
+    <CheckBox android:id="@+id/chkClean" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFFFFF" android:buttonTint="#FFA726" android:text="أسلوب «اللوحة الفاضية»: امسح كتير وخلّي اللوحة فاضية لحد مرحلة الملء (تجريبي)"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="مرحلة ملء اللوحة (كل مكعب باقي = 1000)" android:textColor="#CFE1F7" android:layout_marginTop="8dp"/>
+    <SeekBar android:id="@+id/seekFill" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <TextView android:id="@+id/lblFill" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="قوة الذكاء الاصطناعي" android:textColor="#CFE1F7"/>
     <SeekBar android:id="@+id/seekLevel" android:layout_width="match_parent" android:layout_height="wrap_content"/>
     <TextView android:id="@+id/lblLevel" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA726"/>

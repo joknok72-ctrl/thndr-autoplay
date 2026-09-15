@@ -44,6 +44,7 @@ object AI {
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 0.3
     @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
+    @JvmField var W_CLEAN = 0.0        // clean-board style: reward per empty cell before the fill phase (player's strategy)
     @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)
     @JvmField var END_FADE = 9         // the end-bonus fades in over the last N moves
     @JvmField var END_BEAM = 64        // wider beam in the last END_BEAM_REM moves (deeper end-game search)
@@ -62,7 +63,7 @@ object AI {
         return Pair((res.cells.size + 20 * res.lines + res.bonusHit) * nm, nm)
     }
 
-    private class BQ(val q: Double, val rf: IntArray, val cf: IntArray, val bf: IntArray, val dead: Int, val cover: Double, val tight: Double)
+    private class BQ(val q: Double, val rf: IntArray, val cf: IntArray, val bf: IntArray, val dead: Int, val cover: Double, val tight: Double, val empty: Int)
 
     private fun boardQuality(board: IntArray, cfg: Cfg): BQ {
         var empty = 0; var holes = 0; var trans = 0; var nearFull = 0; var edge = 0
@@ -111,7 +112,7 @@ object AI {
             if (size <= 2) islands++
         }
         val q = empty * W_EMPTY - holes * W_HOLES - trans * W_TRANS + nearFull * W_NEAR + edge * W_EDGE + fit * W_FIT - islands * W_ISL + sq3 * W_SQ3 - dead * W_DEAD
-        return BQ(q, rf, cf, bf, dead, cover, tight)
+        return BQ(q, rf, cf, bf, dead, cover, tight, empty)
     }
 
     private class Node(val board: IntArray, val bonus: IntArray, val mult: Int, val pts: Int, val moves: List<Move>) { var score = 0.0 }
@@ -136,9 +137,11 @@ object AI {
         if (rem < END_FADE) { var cubes = 0; for (i in 0 until N * N) if (node.board[i] != 0) cubes++; val w = 1.0 - rem.toDouble() / END_FADE; endVal = cubes * END_CUBE * w * w }
         val deadPen = if (bq.dead > 0 && rem > 0) 400.0 * (1 + node.mult * 0.2) * (if (rem < END_FADE) 6 else 1) else 0.0
         // DYING = losing everything still to come (remaining × mult × STAKE) — (1-cover) ≈ chance the next piece has no place
+        // CLEAN-BOARD PHASE (player's strategy): before the fill phase, reward an empty board (flexibility + every clear pays 20×mult)
+        val cleanVal = if (rem >= END_FADE) bq.empty * W_CLEAN * (1 + node.mult * 0.15) else 0.0
         val stake = if (rem > 0) rem * node.mult * STAKE else 0.0
         val surviv = if (rem > 0 && W_COVER > 0) -(1 - bq.cover) * stake * W_COVER - bq.tight * stake * W_TIGHT else 0.0
-        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv
+        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal
     }
 
     // ---- piece library with the REAL deal distribution (96 pieces observed across two full games; big 3x3 / 5-bars never appear) ----

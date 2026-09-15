@@ -23,7 +23,7 @@
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
-              cover: 1, tight: 0.3, stake: 12,   // real-piece survivability (0 = off)
+              cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -91,13 +91,16 @@
     // DYING = losing everything still to come (remaining moves × mult × ~12 pts) AND the 1000/cube end bonus.
     // survivability: (1-cover) is the chance the next dealt piece has NO place at all.
     const stake = rem > 0 ? rem * node.mult * (W.stake||12) : 0;
+    // CLEAN-BOARD PHASE (player's strategy): before the fill phase, reward an empty board — every empty cell keeps the
+    // board flexible and every clear pays 20×mult; the reward scales with the multiplier (what a future line is worth).
+    const cleanVal = rem >= W.endFade ? bq.empty * (W.clean||0) * (1 + node.mult * 0.15) : 0;
     const surviv = rem > 0 && W.cover > 0 ? -(1 - bq.cover) * stake * W.cover - bq.tight * stake * (W.tight||0) : 0;
     // END BONUS: 1000 per cube left on the board after the 75th piece (only if the game is completed).
     // Fades in over the last W.endFade moves; survival still matters until the very last move.
     let endVal = 0;
     if (rem < W.endFade) { let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++; const w = 1 - rem / W.endFade; endVal = cubes * W.endCube * w * w; }
     const deadPen = (bq.dead > 0 && rem > 0) ? (W.deadPen||400) * (1 + node.mult*0.2) * (rem < W.endFade ? 6 : 1) : 0;
-    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal;
   }
 
   function permutations(arr) { if (arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out; }

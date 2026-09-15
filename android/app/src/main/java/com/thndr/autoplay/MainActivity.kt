@@ -50,6 +50,13 @@ class MainActivity : AppCompatActivity() {
         val chkDeep = findViewById<android.widget.CheckBox>(R.id.chkDeep)
         chkDeep.isChecked = prefs.getBoolean("deepEnd", true)
         chkDeep.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("deepEnd", v).apply() }
+        val chkClean = findViewById<android.widget.CheckBox>(R.id.chkClean)
+        chkClean.isChecked = prefs.getBoolean("cleanStyle", false)
+        chkClean.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("cleanStyle", v).apply() }
+        val seekFill = findViewById<SeekBar>(R.id.seekFill); val lblFill = findViewById<TextView>(R.id.lblFill)
+        seekFill.max = 3; seekFill.progress = (prefs.getInt("fillMoves", 9) / 3 - 2).coerceIn(0, 3)
+        lblFill.text = fillName(seekFill.progress)
+        seekFill.setOnSeekBarChangeListener(simple { prefs.edit().putInt("fillMoves", (it + 2) * 3).apply(); lblFill.text = fillName(it) })
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3).coerceIn(1, 3) - 1
@@ -69,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         tick()
     }
 
+    private fun fillName(i: Int) = "ملء اللوحة في آخر ${i + 2} لفلات" + (if (i == 1) " (موصى به)" else "")
     private fun levelName(l: Int) = when (l) { 1 -> "سريع"; 2 -> "قوي"; else -> "الأقصى — أعلى نقاط في الـ 25 لفل (موصى به)" }
     private fun simple(f: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) { f(p) }

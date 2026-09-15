@@ -53,6 +53,23 @@ class BotService : Service() {
     @Volatile private var forceReplan = false
     @Volatile private var confirmedPieces: List<com.thndr.autoplay.engine.Piece?>? = null
     @Volatile private var pendingScreen: Screen? = null
+    // HUD memory: level & multiplier never go DOWN inside a game (only a new game resets them).
+    // If the OCR misses a frame (returns 1) we keep the last good value — otherwise the planner would think 70 moves remain
+    // and never switch to the end-game fill strategy.
+    private var memLevel = 1; private var memMult = 1
+    /** Strategy knobs from settings → planner fields. */
+    private fun applyStrategy() {
+        AI.END_FADE = prefs.getInt("fillMoves", 9).coerceIn(3, 15)              // fill the board in the last N moves (3 per level)
+        AI.W_CLEAN = if (prefs.getBoolean("cleanStyle", false)) 1.0 else 0.0     // player's clean-board style
+    }
+    private fun fixHud(scr: Screen): Screen {
+        val newGame = scr.level <= 1 && scr.mult <= 1 && scr.board.count { it != 0 } <= 5
+        if (newGame) { memLevel = 1; memMult = 1; return scr }
+        val lvl = if (scr.level in 2..25 && scr.level >= memLevel - 1) scr.level else memLevel
+        val mul = if (scr.mult in 2..99 && scr.mult >= memMult - 1) scr.mult else memMult
+        memLevel = maxOf(memLevel, lvl); memMult = maxOf(memMult, mul)
+        return if (lvl == scr.level && mul == scr.mult) scr else scr.copy(mult = mul, level = lvl)
+    }
     private var editor: PieceEditorOverlay? = null
     private val prefs by lazy { getSharedPreferences("bot", Context.MODE_PRIVATE) }
 
@@ -161,6 +178,7 @@ class BotService : Service() {
                     val bmp2 = capture()
                     val scr2 = try { bmp2?.let { ScreenParser.parse(it) } } catch (e: ScreenParser.ParseException) { null }
                     if (scr2 != null && (scr == null || scr2.piecesFound > scr.piecesFound || scr2.tray.map { it?.piece?.toString() } != scr.tray.map { it?.piece?.toString() })) scr = scr2
+                    if (scr != null) scr = fixHud(scr)
                     overlay?.setHiddenForCapture(false)
                     guide?.setMessage("بقرأ الشاشة وبفكر…"); report("بفكر…")
                     if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
@@ -184,6 +202,7 @@ class BotService : Service() {
                     confirmedPieces = null; pendingScreen = null
                     // tray rect per slot: use the read rect if present, else a default slot box under the board
                     val slotW = ps.width / 3f
+                    applyStrategy()
                     val deep = prefs.getBoolean("deepEnd", true)
                     if (deep && ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25) — زي الموقع بالضبط، استنى شوية…")
                     val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3), deep)
@@ -279,7 +298,7 @@ class BotService : Service() {
         while (!stopFlag) {
             try {
                 val bmp = capture() ?: run { Thread.sleep(200); null } ?: continue
-                val scr = try { ScreenParser.parse(bmp) } catch (e: ScreenParser.ParseException) {
+                val scr = try { fixHud(ScreenParser.parse(bmp)) } catch (e: ScreenParser.ParseException) {
                     report("مش شايف اللوحة — افتح اللعبة (${e.message})"); Thread.sleep(700); continue
                 }
                 lastBoard = scr.boardString()
@@ -294,7 +313,7 @@ class BotService : Service() {
                 lastSig = sig
 
                 val pieces = scr.tray.map { it?.piece }
-                report("بفكر… (${scr.piecesFound} قطع)")
+                report("بفكر… (${scr.piecesFound} قطع)"); applyStrategy()
                 val plan = AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, prefs.getInt("level", 3).coerceIn(1, 3), prefs.getBoolean("deepEnd", true))
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
