@@ -14,12 +14,16 @@
   // probes = pieces that actually occur in the real game (no 3x3 / 5-long bars — they are never dealt)
   const PROBES = ['T5a','Lbig3','U1','plus','T4a','J4a','i4','S4a','sq2','v4','l3a','i3'].map(k => E.makePiece(k));
   const PROBE_W = { T5a: 2, Lbig3: 1.5, U1: 1.5, plus: 1.5, T4a: 1, J4a: 1, i4: 1, S4a: 1, sq2: 1, v4: 1, l3a: .6, i3: .6 };
+  // full real piece library with deal weights (for survivability)
+  const LIBP = E.LIB_ORDER.filter(k => (E.REAL_W||{})[k] > 0).map(k => ({ p: E.makePiece(k), w: E.REAL_W[k] }));
+  const LIBW = LIBP.reduce((a,b)=>a+b.w,0) || 1;
   const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
+              cover: 0, tight: 0, stake: 12,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 6,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -54,6 +58,12 @@
       const br=(k/3|0)*3, bc=(k%3)*3; let bf=0; for(let r=br;r<br+3;r++) for(let c=bc;c<bc+3;c++) if(board[idx(r,c)]) bf++;
       boxFill[k]=bf; if (bf >= 7) nearFull += (bf-6);
     }
+    // REAL-PIECE SURVIVABILITY: what fraction (weighted by real deal frequency) of the pieces the game can deal still fits?
+    let cover = 0, tight = 0;
+    if (W.cover > 0) {
+      for (const lp of LIBP) { const n = E.allPlacements(board, lp.p).length; if (n > 0) cover += lp.w; if (n < 3) tight += lp.w * (3 - n) / 3; }
+      cover /= LIBW; tight /= LIBW;
+    }
     let fit = 0, dead = 0;
     for (let k=0;k<Math.min(cfg.probes,PROBES.length);k++) { const p=PROBES[k]; const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
     let sq3 = 0;
@@ -61,7 +71,7 @@
     const seen = new Uint8Array(N*N);
     for (let i=0;i<N*N;i++) if (board[i] && !seen[i]) { let size=0; const st=[i]; seen[i]=1; while(st.length){ const j=st.pop(); size++; const r=(j/N)|0, c=j%N; if(r>0&&board[j-N]&&!seen[j-N]){seen[j-N]=1;st.push(j-N);} if(r<N-1&&board[j+N]&&!seen[j+N]){seen[j+N]=1;st.push(j+N);} if(c>0&&board[j-1]&&!seen[j-1]){seen[j-1]=1;st.push(j-1);} if(c<N-1&&board[j+1]&&!seen[j+1]){seen[j+1]=1;st.push(j+1);} } if (size<=2) islands++; }
     const q = empty * W.empty - holes * W.holes - trans * W.trans + nearFull * W.near + edgeTouch * W.edge + fit * W.fit - islands * W.isl + sq3 * W.sq3 - dead * W.dead;
-    return { q, rowFill, colFill, boxFill, dead };
+    return { q, rowFill, colFill, boxFill, dead, cover, tight, empty };
   }
 
   /** Full evaluation of a node. ctx = { mult0, remaining } (remaining = moves left AFTER this node) */
@@ -77,13 +87,17 @@
     }
     let bonusPot = 0;
     for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
-    const survW = W.surv * Math.min(1, rem / 15) * (1 + node.mult * 0.15) * 4;
+    const survW = W.surv * Math.max(W.survFloor||0, Math.min(1, rem / 15)) * (1 + node.mult * 0.15) * 4;
+    // DYING = losing everything still to come (remaining moves × mult × ~12 pts) AND the 1000/cube end bonus.
+    // survivability: (1-cover) is the chance the next dealt piece has NO place at all.
+    const stake = rem > 0 ? rem * node.mult * (W.stake||12) : 0;
+    const surviv = rem > 0 && W.cover > 0 ? -(1 - bq.cover) * stake * W.cover - bq.tight * stake * (W.tight||0) : 0;
     // END BONUS: 1000 per cube left on the board after the 75th piece (only if the game is completed).
     // Fades in over the last W.endFade moves; survival still matters until the very last move.
     let endVal = 0;
     if (rem < W.endFade) { let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++; const w = 1 - rem / W.endFade; endVal = cubes * W.endCube * w * w; }
     const deadPen = (bq.dead > 0 && rem > 0) ? (W.deadPen||400) * (1 + node.mult*0.2) * (rem < W.endFade ? 6 : 1) : 0;
-    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv;
   }
 
   function permutations(arr) { if (arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out; }

@@ -109,6 +109,6 @@
     return { points: pts, streak: res.lines > 0 ? (state.streak || 0) + 1 : 0, mult, cubes: res.cells.length, lines: res.lines };
   }
 
-  const Engine = { N, SHAPES, LIB_ORDER, makePiece, normalize, rotate, flip, randomPiece, emptyBoard, idx, canPlace, anyPlacement, allPlacements, place, scoreMove };
+  const Engine = { N, SHAPES, LIB_ORDER, REAL_W, makePiece, normalize, rotate, flip, randomPiece, emptyBoard, idx, canPlace, anyPlacement, allPlacements, place, scoreMove };
   global.Engine = Engine;
 })(typeof self !== 'undefined' ? self : this);
