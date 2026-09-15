@@ -41,6 +41,7 @@
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="4) التشغيل" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold" android:layout_marginTop="16dp"/>
     <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="56dp" android:text="▶ ابدأ (تسجيل الشاشة + زر عائم)" android:backgroundTint="#059669"/>
     <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="■ إيقاف البوت" android:backgroundTint="#E53935"/>
+    <Button android:id="@+id/btnShareLog" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="📤 مشاركة سجل الجولة (بدل تصوير الشاشة)" android:backgroundTint="#0EA5E9"/>
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="بعد الضغط على ابدأ: افتح لعبة THNDR Block واضغط الزر العائم ▶.\n\nلما القطع الثلاث تظهر اضغط «خطة ✦» → هيرسم على اللوحة أماكن القطع بأرقام 1-2-3 (الحالية بالأخضر) وتثبت الخطة ومش هتتغير. حط القطع براحتك بالترتيب واضغط «التالي» بعد كل قطعة (اختياري). لما القطع الجديدة تظهر اضغط «خطة» تاني." android:textColor="#7F97B8" android:layout_marginTop="8dp"/>
 
     <TextView android:id="@+id/stBot" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#CFE1F7" android:fontFamily="monospace" android:layout_marginTop="12dp" android:layoutDirection="ltr" android:textDirection="ltr"/>

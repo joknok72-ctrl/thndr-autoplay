@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJ)
         }
         findViewById<Button>(R.id.btnStop).setOnClickListener { startService(Intent(this, BotService::class.java).setAction(BotService.ACTION_STOP)) }
+        findViewById<Button>(R.id.btnShareLog).setOnClickListener { if (!GameLog.share(this)) toast("مافيش سجل جولة لسه — العب جولة بالمرشد الأول") }
         findViewById<Button>(R.id.btnResetCal).setOnClickListener { prefs.edit().remove("offX").remove("offY").putBoolean("calibrated", false).apply(); toast("تم تصفير المعايرة") }
 
         val rgMode = findViewById<android.widget.RadioGroup>(R.id.rgMode)
