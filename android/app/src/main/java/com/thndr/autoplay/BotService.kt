@@ -63,7 +63,7 @@ class BotService : Service() {
     /** Strategy knobs from settings → planner fields. */
     private fun applyStrategy() {
         AI.END_FADE = prefs.getInt("fillMoves", 9).coerceIn(3, 15)              // fill the board in the last N moves (3 per level)
-        AI.W_CLEAN = if (prefs.getBoolean("cleanStyle", false)) 1.0 else 0.0     // player's clean-board style
+        AI.W_CLEAN = 0.0                                                          // clean-board style removed (scored lower in tests)
     }
     private fun fixHud(scr: Screen): Screen {
         val cubes = scr.board.count { it != 0 }
@@ -203,7 +203,7 @@ class BotService : Service() {
                     guide?.setMessage("بقرأ الشاشة وبفكر…"); report("بفكر…")
                     if (scr == null) { guide?.setMessage("مش شايف اللوحة — افتح اللعبة واضغط «خطة» تاني"); report("مش شايف اللوحة"); Thread.sleep(300); continue }
                     lastBoard = scr.boardString()
-                    if (scr.piecesFound == 0) { guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }
+                    if (scr.piecesFound == 0) { runCatching { GameLog.record(this, scr, scr.tray.map { it?.piece }, com.thndr.autoplay.engine.Plan(emptyList(), 0, false), pendingBitmap, "NO_PIECES_READ") }; pendingBitmap = null; guide?.setMessage("مافيش قطع في الصينية — استنى لما تظهر واضغط «خطة»"); report("مافيش قطع"); Thread.sleep(300); continue }
                     // Show what we READ and let the user confirm/fix the shapes ("he draws the cubes himself")
                     pendingScreen = scr
                     if (prefs.getBoolean("confirmPieces", false)) {
@@ -226,7 +226,10 @@ class BotService : Service() {
                     val deep = prefs.getBoolean("deepEnd", true)
                     if (deep && ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25) — زي الموقع بالضبط، استنى شوية…")
                     val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3), deep)
-                    if (plan.gameOver || plan.moves.isEmpty()) { guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue }
+                    if (plan.gameOver || plan.moves.isEmpty()) {
+                        runCatching { GameLog.record(this, ps, confirmed, plan, pendingBitmap, "GAME_OVER: no placement for any order") }; pendingBitmap = null
+                        guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue
+                    }
                     steps = plan.moves.map { m ->
                         val piece = confirmed[m.slot]!!
                         val tp = ps.tray.getOrNull(m.slot)

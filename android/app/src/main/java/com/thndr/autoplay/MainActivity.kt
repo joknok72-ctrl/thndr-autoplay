@@ -51,9 +51,6 @@ class MainActivity : AppCompatActivity() {
         val chkDeep = findViewById<android.widget.CheckBox>(R.id.chkDeep)
         chkDeep.isChecked = prefs.getBoolean("deepEnd", true)
         chkDeep.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("deepEnd", v).apply() }
-        val chkClean = findViewById<android.widget.CheckBox>(R.id.chkClean)
-        chkClean.isChecked = prefs.getBoolean("cleanStyle", false)
-        chkClean.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("cleanStyle", v).apply() }
         val seekFill = findViewById<SeekBar>(R.id.seekFill); val lblFill = findViewById<TextView>(R.id.lblFill)
         seekFill.max = 3; seekFill.progress = (prefs.getInt("fillMoves", 9) / 3 - 2).coerceIn(0, 3)
         lblFill.text = fillName(seekFill.progress)
