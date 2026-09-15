@@ -28,7 +28,7 @@
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
-              rollRounds: 3, rollK: 5, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
+              rollRounds: 3, rollK: 5, rollKFill: 3, rollKPts: 2, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
             }, global.AI2_W || global.AI_W || {});
 
   /** Real THNDR scoring. */
@@ -142,8 +142,15 @@
     // ---- end-game rollouts: in the last W.rollRounds rounds, re-rank the top candidates by simulating the
     //      remaining rounds with random pieces (expectimax over the unknown future) ----
     if (rollActive && cands.length > 1) {
+      // candidate diversity: the heuristic top-K PLUS the best "fill" plans (pts + cubes×1000) and the best raw-points plans,
+      // so the rollouts (which know the real end-bonus) can pick a board-filling line the heuristic under-rates.
       cands.sort((a,b)=>b.score-a.score);
       const top = cands.slice(0, W.rollK);
+      const fillVal = n => { let c=0; for (let i=0;i<N*N;i++) if (n.board[i]) c++; return n.pts + c * W.endCube; };
+      const byFill = cands.slice().sort((a,b)=>fillVal(b)-fillVal(a));
+      for (const n of byFill) { if (top.length >= W.rollK + (W.rollKFill||3)) break; if (!top.includes(n)) top.push(n); }
+      const byPts = cands.slice().sort((a,b)=>b.pts-a.pts);
+      for (const n of byPts) { if (top.length >= W.rollK + (W.rollKFill||3) + (W.rollKPts||2)) break; if (!top.includes(n)) top.push(n); }
       let rs = 12345 + lvl * 7919; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
       // same random future for every candidate (common random numbers → fair comparison)
       const futures = [];
