@@ -15,7 +15,7 @@ import android.widget.TextView
 import kotlin.math.abs
 
 /** Floating ▶/■ button + status line drawn over the game. Draggable. */
-class OverlayController(private val ctx: Context, private val onToggle: () -> Unit, private val onNext: () -> Unit = {}, private val onReplan: () -> Unit = {}) {
+class OverlayController(private val ctx: Context, private val onToggle: () -> Unit, private val onNext: () -> Unit = {}, private val onReplan: () -> Unit = {}, private val onNewGame: () -> Unit = {}, private val onShare: () -> Unit = {}) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private var root: LinearLayout? = null
@@ -23,6 +23,8 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
     private lateinit var status: TextView
     private lateinit var nextBtn: TextView
     private lateinit var planBtn: TextView
+    private lateinit var newBtn: TextView
+    private lateinit var shareBtn: TextView
     private val lp = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT
@@ -60,7 +62,22 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
                 visibility = View.GONE
                 setOnClickListener { onReplan() }
             }
-            row.addView(btn); row.addView(planBtn); row.addView(nextBtn); row.addView(status)
+            newBtn = TextView(ctx).apply {
+                text = "🆕"; textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply { marginStart = (8 * d).toInt() }
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#7C3AED")) }
+                visibility = View.GONE
+                setOnClickListener { onNewGame() }
+                setOnLongClickListener { onShare(); true }
+            }
+            shareBtn = TextView(ctx).apply {
+                text = "📤"; textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply { marginStart = (6 * d).toInt() }
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#0EA5E9")) }
+                visibility = View.GONE
+                setOnClickListener { onShare() }
+            }
+            row.addView(btn); row.addView(planBtn); row.addView(nextBtn); row.addView(newBtn); row.addView(shareBtn); row.addView(status)
             var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
             row.setOnTouchListener { _, e ->
                 when (e.action) {
@@ -75,8 +92,8 @@ class OverlayController(private val ctx: Context, private val onToggle: () -> Un
             BotService.listener = { s -> main.post { if (root != null) status.text = s } }
         }
     }
-    fun setRunning(r: Boolean) { main.post { if (root != null) { btn.text = if (r) "■" else "▶"; (btn.background as GradientDrawable).setColor(Color.parseColor(if (r) "#E53935" else "#1B6BC0")); if (!r) { nextBtn.visibility = View.GONE; planBtn.visibility = View.GONE } } } }
+    fun setRunning(r: Boolean) { main.post { if (root != null) { btn.text = if (r) "■" else "▶"; (btn.background as GradientDrawable).setColor(Color.parseColor(if (r) "#E53935" else "#1B6BC0")); if (!r) { nextBtn.visibility = View.GONE; planBtn.visibility = View.GONE; newBtn.visibility = View.GONE; shareBtn.visibility = View.GONE } } } }
     fun setHiddenForCapture(h: Boolean) { main.post { root?.visibility = if (h) View.INVISIBLE else View.VISIBLE } }
-    fun setNextVisible(v: Boolean) { main.post { if (root != null) { nextBtn.visibility = if (v) View.VISIBLE else View.GONE; planBtn.visibility = nextBtn.visibility } } }
+    fun setNextVisible(v: Boolean) { main.post { if (root != null) { nextBtn.visibility = if (v) View.VISIBLE else View.GONE; planBtn.visibility = nextBtn.visibility; newBtn.visibility = nextBtn.visibility; shareBtn.visibility = nextBtn.visibility } } }
     fun hide() { main.post { root?.let { runCatching { wm.removeView(it) } }; root = null; BotService.listener = null } }
 }
