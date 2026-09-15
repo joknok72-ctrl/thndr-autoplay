@@ -51,6 +51,8 @@ object AI {
     @JvmField var END_BEAM_REM = 12
     @JvmField var ROLL_ROUNDS = 3      // end-game rollouts in the last N rounds
     @JvmField var ROLL_K = 5           // candidates re-ranked by rollout
+    @JvmField var ROLL_K_FILL = 3      // + best board-filling candidates
+    @JvmField var ROLL_K_PTS = 2       // + best raw-points candidates
     @JvmField var ROLL_M = 6           // random futures per candidate
     @JvmField var ROLL_LEVEL = 1       // planner level used inside rollouts (fast)
 
@@ -254,7 +256,10 @@ object AI {
         var b = best ?: return Plan(emptyList(), 0, true, mult0)
         if (rollActive && cands.size > 1) {
             cands.sortByDescending { it.score }
-            val top = cands.take(ROLL_K)
+            // candidate diversity: heuristic top-K + best "fill" plans (pts + cubes×1000) + best raw-points plans
+            val top = ArrayList(cands.take(ROLL_K))
+            for (n in cands.sortedByDescending { it.pts + it.board.count { v -> v != 0 } * END_CUBE }) { if (top.size >= ROLL_K + ROLL_K_FILL) break; if (n !in top) top.add(n) }
+            for (n in cands.sortedByDescending { it.pts }) { if (top.size >= ROLL_K + ROLL_K_FILL + ROLL_K_PTS) break; if (n !in top) top.add(n) }
             val rng = java.util.Random(12345L + lvl * 7919L)
             val futures = (0 until ROLL_M).map {
                 (0 until roundsLeft).map {
