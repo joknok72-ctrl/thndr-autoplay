@@ -38,7 +38,7 @@ object AI {
     private const val W_EDGE = 0.25; private const val W_FIT = 6.0; private const val W_ISL = 2.5; private const val W_SQ3 = 1.5; private const val W_DEAD = 15.0
     // score-max weights (tuned by simulation)
     @JvmField var K_MULT = 18.0        // value of +1 multiplier per remaining move
-    @JvmField var W_SURV = 2.0         // survival weight
+    @JvmField var W_SURV = 4.0         // survival weight (re-tuned on the REAL piece distribution: 0 deaths / 20 games)
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable
     @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)

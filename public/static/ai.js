@@ -17,7 +17,7 @@
   const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
-              surv: 2.0,      // survival/board-quality weight (scaled by remaining moves)
+              surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
