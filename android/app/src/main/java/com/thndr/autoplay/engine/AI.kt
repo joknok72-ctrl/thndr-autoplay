@@ -41,7 +41,7 @@ object AI {
     @JvmField var W_SURV = 4.0         // survival weight (re-tuned on the REAL piece distribution: 0 deaths / 20 games)
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
-    @JvmField var W_FARM = 1.0         // bonus farming weight (measured: 77.8K → 125.6K on the realistic sim)
+    @JvmField var W_FARM = 1.2         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
     @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
     private val TIER = intArrayOf(50, 150, 300, 500, 1000, 2000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake

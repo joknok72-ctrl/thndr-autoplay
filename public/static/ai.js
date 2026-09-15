@@ -22,7 +22,7 @@
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3, orangeMode: 0,    // oranges parked in near-complete lines (fraction of full mult value)
-              bonusKeep: 0.4, farm: 0, farmRate: 0.33, // uncovered bonus cells: keep them coverable
+              bonusKeep: 0.4, farm: 1.2, farmRate: 0.33, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
