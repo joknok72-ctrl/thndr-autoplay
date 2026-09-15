@@ -21,13 +21,14 @@
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
-              orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
+              orange: 0.3, orangeMode: 0,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
+              midRollM: 0, midRollK: 6, midRollLevel: 1,   // mid-game 1-round lookahead (0 = off)
               rollRounds: 3, rollK: 5, rollKFill: 3, rollKPts: 2, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
             }, global.AI2_W || global.AI_W || {});
 
@@ -79,11 +80,22 @@
     const bq = boardQuality(node.board, cfg);
     const rem = Math.max(0, ctx.remaining);
     const multGain = (node.mult - ctx.mult0) * rem * W.kMult;
+    // ORANGE POTENTIAL: an orange cube left on the board is worth (+1 mult × remaining moves × kMult) IF it gets cleared.
+    // Its chance of being cleared soon depends on how many cells its best line still needs (1 cell ≈ next piece, 2–3 ≈ next round).
+    // orangeMode 1 = feasibility curve over the 3 lines (row/col/box) instead of the old prog² on the best line.
     let orangePot = 0;
+    const OF = W.orangeF || [0, 0.85, 0.6, 0.38, 0.2, 0.1, 0.05, 0.02, 0.01, 0];
     for (let i=0;i<N*N;i++) if (node.board[i] === 2) {
       const r=(i/N)|0, c=i%N, b=((r/3)|0)*3+((c/3)|0);
-      const prog = Math.max(bq.rowFill[r], bq.colFill[c], bq.boxFill[b]) / 9;
-      orangePot += rem * W.kMult * W.orange * prog * prog;
+      if (W.orangeMode === 1) {
+        const need = [9 - bq.rowFill[r], 9 - bq.colFill[c], 9 - bq.boxFill[b]].sort((a,b)=>a-b);
+        // best line + a little for the second line (two ways to clear it)
+        const f = Math.min(1, OF[need[0]] + 0.35 * OF[need[1]]);
+        orangePot += rem * W.kMult * W.orange * f;
+      } else {
+        const prog = Math.max(bq.rowFill[r], bq.colFill[c], bq.boxFill[b]) / 9;
+        orangePot += rem * W.kMult * W.orange * prog * prog;
+      }
     }
     let bonusPot = 0;
     for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
@@ -175,6 +187,31 @@
       }
       let bestAvg = -Infinity, bestNode = null;
       for (let ci=0; ci<top.length; ci++) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
+      if (bestNode) best = bestNode;
+    }
+    // ---- MID-GAME LOOKAHEAD (orange / multiplier): outside the end-game, re-rank the top candidates by a 1-round
+    //      rollout with random next pieces (fast planner) + the heuristic value of the resulting position.
+    //      This is what tells apart "orange parked where the next round can clear it" from "orange buried".
+    const midActive = !rollActive && opts.rollout !== false && deep && (W.midRollM||0) > 0 && roundsLeft >= 1 && cands.length > 1;
+    if (midActive) {
+      cands.sort((a,b)=>b.score-a.score);
+      const top = cands.slice(0, W.midRollK||6);
+      let rs = 777 + lvl * 104729; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
+      const futures = [];
+      for (let m=0;m<W.midRollM;m++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; futures.push(ps); }
+      const rem2 = Math.max(0, remAfterRound - 3);
+      let bestAvg = -Infinity, bestNode = null;
+      for (const cand of top) {
+        let sum = 0;
+        for (const f of futures) {
+          const pl = plan(cand.board, cand.bonus, f, { mult: cand.mult, level: lvl + 1 }, { level: W.midRollLevel||1, rollout: false, deep: false });
+          if (pl.gameOver) { sum += cand.pts - rem2 * cand.mult * (W.stake||12); continue; }
+          const nn = { board: pl.finalBoard, bonus: pl.finalBonus, mult: pl.finalMult, pts: cand.pts + pl.total };
+          sum += evaluate(nn, { mult0, remaining: rem2 }, cfg);
+        }
+        const avg = sum / futures.length;
+        if (avg > bestAvg) { bestAvg = avg; bestNode = cand; }
+      }
       if (bestNode) best = bestNode;
     }
     return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalBonus: best.bonus, finalMult: best.mult };
