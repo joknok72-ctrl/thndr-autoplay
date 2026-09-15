@@ -23,9 +23,9 @@
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, // uncovered bonus cells: keep them coverable
-              cover: 0, tight: 0, stake: 12,   // real-piece survivability (0 = off)
+              cover: 1, tight: 0.3, stake: 12,   // real-piece survivability (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
-              endFade: 6,     // the end-bonus fades in over the last N moves
+              endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
               rollRounds: 3, rollK: 5, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)

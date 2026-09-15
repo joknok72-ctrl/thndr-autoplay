@@ -42,10 +42,10 @@ object AI {
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
-    @JvmField var W_TIGHT = 0.0
+    @JvmField var W_TIGHT = 0.3
     @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
     @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)
-    @JvmField var END_FADE = 6         // the end-bonus fades in over the last N moves
+    @JvmField var END_FADE = 9         // the end-bonus fades in over the last N moves
     @JvmField var END_BEAM = 64        // wider beam in the last END_BEAM_REM moves (deeper end-game search)
     @JvmField var END_BEAM_REM = 12
     @JvmField var ROLL_ROUNDS = 3      // end-game rollouts in the last N rounds
