@@ -26,7 +26,7 @@
               cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
               farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,
-              crowdW: 1.0, crowd0: 30, run5W: 0.4,   // long-piece room (I5/V5) penalty   // crowding penalty (0 = off)
+              crowdW: 1.0, crowd0: 30, run5W: 0,   // long-piece room (I5/V5) penalty   // crowding penalty (0 = off)
               farmModel: 0, farmSurv: 0.985, farmK: 0.3,   // 1 = optimal cash-out model (max over future rounds)   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)

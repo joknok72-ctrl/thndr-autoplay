@@ -50,7 +50,7 @@ object AI {
     @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
     @JvmField var CROWD_W = 1.0          // crowding penalty weight (0 = off)
     @JvmField var CROWD0 = 30
-    @JvmField var RUN5_W = 0.4           // long-piece room (I5/V5) penalty
+    @JvmField var RUN5_W = 0.0           // long-piece room (I5/V5) penalty
     @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
     @JvmField var FARM_SURV = 0.985
     @JvmField var FARM_K = 0.3
