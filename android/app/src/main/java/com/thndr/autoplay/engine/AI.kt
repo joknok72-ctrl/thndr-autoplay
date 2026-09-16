@@ -50,6 +50,7 @@ object AI {
     @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
     @JvmField var CROWD_W = 1.0          // crowding penalty weight (0 = off)
     @JvmField var CROWD0 = 30
+    @JvmField var RUN5_W = 0.4           // long-piece room (I5/V5) penalty
     @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
     @JvmField var FARM_SURV = 0.985
     @JvmField var FARM_K = 0.3
@@ -95,7 +96,7 @@ object AI {
         return Pair((res.cells.size + 20 * res.lines + res.bonusHit) * nm, nm)
     }
 
-    private class BQ(val q: Double, val rf: IntArray, val cf: IntArray, val bf: IntArray, val dead: Int, val cover: Double, val tight: Double, val empty: Int)
+    private class BQ(val q: Double, val rf: IntArray, val cf: IntArray, val bf: IntArray, val dead: Int, val cover: Double, val tight: Double, val empty: Int, val run5v: Int = 0, val run5h: Int = 0)
 
     // MEMO: inside rollouts the same board is evaluated thousands of times → bounded, thread-safe cache keyed by occupancy
     private val BQ_CACHE = java.util.concurrent.ConcurrentHashMap<String, BQ>()
@@ -154,7 +155,10 @@ object AI {
             if (size <= 2) islands++
         }
         val q = empty * W_EMPTY - holes * W_HOLES - trans * W_TRANS + nearFull * W_NEAR + edge * W_EDGE + fit * W_FIT - islands * W_ISL + sq3 * W_SQ3 - dead * W_DEAD
-        return BQ(q, rf, cf, bf, dead, cover, tight, empty)
+        // LONG-PIECE ROOM: columns / rows that still hold a straight run of 5 empty cells (I5 / V5 ≈ 4% of deals each)
+        var run5v = 0; var run5h = 0
+        for (k in 0 until N) { var rv = 0; var rh = 0; var okv = false; var okh = false; for (j in 0 until N) { rv = if (board[Engine.idx(j, k)] != 0) 0 else rv + 1; if (rv >= 5) okv = true; rh = if (board[Engine.idx(k, j)] != 0) 0 else rh + 1; if (rh >= 5) okh = true }; if (okv) run5v++; if (okh) run5h++ }
+        return BQ(q, rf, cf, bf, dead, cover, tight, empty, run5v, run5h)
     }
 
     private class Node(val board: IntArray, val bonus: IntArray, val mult: Int, val pts: Int, val moves: List<Move>) { var score = 0.0 }
@@ -215,7 +219,8 @@ object AI {
         // real deal distribution). Outside the fill phase, charge that probability × what dying would forfeit.
         var crowd = 0.0
         if (rem >= END_FADE && CROWD_W > 0) { var cubes = 0; for (i in 0 until N * N) if (node.board[i] != 0) cubes++; val x = maxOf(0, cubes - CROWD0) / 15.0; crowd = -x * x * CROWD_W * (stake + DEATH * 0.3) }
-        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd
+        val run5 = if (rem >= END_FADE && RUN5_W > 0) -((2 - minOf(2, bq.run5v)) + (2 - minOf(2, bq.run5h))) * RUN5_W * (stake + DEATH * 0.3) * 0.05 else 0.0
+        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd + run5
     }
 
     // ---- piece library with the REAL deal distribution (96 pieces observed across two full games; big 3x3 / 5-bars never appear) ----
