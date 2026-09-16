@@ -67,6 +67,7 @@ object AI {
     @JvmField var ROLL_K = 5           // candidates re-ranked by rollout
     @JvmField var ROLL_K_FILL = 3      // + best board-filling candidates
     @JvmField var ROLL_K_PTS = 2       // + best raw-points candidates
+    @JvmField var ROLL_K_OPEN = 6      // + the most open boards in the end-game rollouts (safety)
     @JvmField var ROLL_M = 6           // random futures per candidate
     @JvmField var ROLL_LEVEL = 1       // planner level used inside rollouts (fast)
 
@@ -335,7 +336,7 @@ object AI {
                 }
                 if (next.isEmpty()) { beam = emptyList(); break }
                 next.sortByDescending { it.score }
-                val keep = if (step == order.size - 1) (if (rollActive) ROLL_K else if (trayActive) maxOf(TRAY_K, TRAY_K_OPEN) else 1)
+                val keep = if (step == order.size - 1) (if (rollActive) maxOf(ROLL_K, ROLL_K_OPEN, ROLL_K_FILL) else if (trayActive) maxOf(TRAY_K, TRAY_K_OPEN) else 1)
                            else if (deep && remaining <= END_BEAM_REM) maxOf(cfg.beam, END_BEAM) else cfg.beam
                 beam = next.take(keep)
             }
@@ -349,6 +350,8 @@ object AI {
             val top = ArrayList(cands.take(ROLL_K))
             for (n in cands.sortedByDescending { it.pts + it.board.count { v -> v != 0 } * END_CUBE }) { if (top.size >= ROLL_K + ROLL_K_FILL) break; if (n !in top) top.add(n) }
             for (n in cands.sortedByDescending { it.pts }) { if (top.size >= ROLL_K + ROLL_K_FILL + ROLL_K_PTS) break; if (n !in top) top.add(n) }
+            // + the most OPEN boards (fewest cubes): when the next tray may not fit, the safe line is rarely in the top-K
+            if (ROLL_K_OPEN > 0) for (n in cands.sortedBy { it.board.count { v -> v != 0 } }) { if (top.size >= ROLL_K + ROLL_K_FILL + ROLL_K_PTS + ROLL_K_OPEN) break; if (n !in top) top.add(n) }
             val rng = java.util.Random(12345L + lvl * 7919L)
             // more futures when fewer rounds remain (same cost): the last round's risk of an unplaceable tray must be sampled well
             val nFut = maxOf(ROLL_M, Math.round(ROLL_M * (ROLL_ROUNDS.toDouble() / maxOf(1, roundsLeft)) * ROLL_M_SCALE).toInt())
