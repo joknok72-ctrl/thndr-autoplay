@@ -126,7 +126,7 @@
     // farm > 0 turns on "bonus farming": value uncovered cells by their expected future value — they grow and the
     // multiplier grows, so covering later is worth more — as long as enough moves remain to cash them in.
     let bonusPot = 0;
-    const TIER = [50,150,300,500,750,1000,1500,2000,3000,5000,7500,10000];
+    const TIER = [50,150,300,500,750,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,8500,9000,9500,10000];  // REAL (screens): +500 per level after 2K
     let nB = 0, nCubes = 0; for (let i=0;i<N*N;i++) { if (node.bonus[i] && !node.board[i]) nB++; if (node.board[i]) nCubes++; }
     // SAFETY: 3 uncovered bonus cells lock up to 9 lines (their rows/cols/boxes cannot clear). On a crowded board that is
     // how games die — so the farming value fades out with crowding (the planner then cashes a cell in, which frees its lines).

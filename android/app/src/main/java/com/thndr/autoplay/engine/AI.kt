@@ -57,7 +57,7 @@ object AI {
     @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
     @JvmField var DEATH = 60000.0      // cost of dying (base) …
     @JvmField var DEATH_REM = 1500.0   // … plus per remaining move (farmed bonuses + 1000/cube end bonus forfeited)
-    private val TIER = intArrayOf(50, 150, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000)
+    private val TIER = intArrayOf(50, 150, 300, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000)  // REAL (screens): +500 per level after 2K
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 1.0
     @JvmField var STAKE = 24.0         // ≈ points per remaining move per multiplier unit
