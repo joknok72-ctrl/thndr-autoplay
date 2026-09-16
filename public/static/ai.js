@@ -26,14 +26,16 @@
               cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
               farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,
+              crowdW: 1.0, crowd0: 30,   // crowding penalty (0 = off)
               farmModel: 0, farmSurv: 0.985, farmK: 0.3,   // 1 = optimal cash-out model (max over future rounds)   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
-              rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
+              rollDeath: 50000,    // penalty for a dead future inside the end-game rollouts
               lastTrayM: 60, lastTrayLoss: 60000,   // last-round safety: sample the final tray directly
+              innerSafeK: 6, innerSafeM: 6,   // inner rollout planner: on the 2nd-to-last round keep K candidates and pick the one the final tray fits
               rollCut: 6000,  // successive halving: drop candidates trailing the leader by > rollCut per future (0 = off)
               rollMScale: 2,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
-              trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24, tray2M: 0, tray2K: 8, tray2W: 0.7,   // tray2M>0 = look TWO trays ahead   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
+              trayM: 40, trayK: 48, trayKOpen: 24, trayCubes: 24, tray2M: 12, tray2K: 8, tray2W: 0.7,   // tray2M>0 = look TWO trays ahead   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -171,13 +173,21 @@
     // CLEAN-BOARD PHASE (player's strategy): before the fill phase, reward an empty board — every empty cell keeps the
     // board flexible and every clear pays 20×mult; the reward scales with the multiplier (what a future line is worth).
     const cleanVal = rem >= W.endFade ? bq.empty * (W.clean||0) * (1 + node.mult * 0.15) : 0;
+    // CROWDING PENALTY: measured on the real deal distribution, P(a 3-piece tray cannot be placed) is ~0 below 30 cubes,
+    // ~5% at 38, ~35% at 45–50. Outside the fill phase, charge that probability × the stake (what dying would forfeit).
+    let crowd = 0;
+    if (rem >= W.endFade && (W.crowdW||0) > 0) {
+      let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++;
+      const x = Math.max(0, cubes - (W.crowd0||30)) / 15;                        // 0 at crowd0, 1 at crowd0+15
+      crowd = -x * x * W.crowdW * (stake + (W.death||0) * 0.3);
+    }
     const surviv = rem > 0 && W.cover > 0 ? -(1 - bq.cover) * stake * W.cover - bq.tight * stake * (W.tight||0) : 0;
     // END BONUS: 1000 per cube left on the board after the 75th piece (only if the game is completed).
     // Fades in over the last W.endFade moves; survival still matters until the very last move.
     let endVal = 0;
     if (rem < W.endFade) { let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++; const w = 1 - rem / W.endFade; endVal = cubes * W.endCube * w * w; }
     const deadPen = (bq.dead > 0 && rem > 0) ? (W.deadPen||400) * (1 + node.mult*0.2) * (rem < W.endFade ? 6 : 1) : 0;
-    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd;
   }
 
   /** Can ALL the pieces of a tray be placed (in some order, line clears included)? Exhaustive, early exit. */
@@ -224,11 +234,21 @@
         if (!next.length) { beam = []; break; }
         next.sort((a,b)=>b.score-a.score);
         const trayActive = !rollActive && deep && opts.rollout !== false && (W.trayM||0) > 0;
-        beam = next.slice(0, step===order.length-1 ? (rollActive ? Math.max(W.rollK, W.rollKOpen||0, W.rollKFill||0) : (trayActive ? Math.max(W.trayK||8, W.trayKOpen||0) : 1)) : ((deep && remaining <= W.endBeamRem) ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
+        beam = next.slice(0, step===order.length-1 ? (rollActive ? Math.max(W.rollK, W.rollKOpen||0, W.rollKFill||0) : opts.safeLast ? (W.innerSafeK||6) : (trayActive ? Math.max(W.trayK||8, W.trayKOpen||0) : 1)) : ((deep && remaining <= W.endBeamRem) ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
       }
       if (beam.length) { for (const b of beam) cands.push(b); if (!best || beam[0].score > best.score) best = beam[0]; }
     }
     if (!best) return { moves: [], total: 0, gameOver: true };
+    // SAFE-LAST (inner rollout planner, second-to-last round): among the kept candidates prefer the board where the FINAL tray fits
+    if (opts.safeLast && cands.length > 1) {
+      cands.sort((a,b)=>b.score-a.score);
+      const top = cands.slice(0, W.innerSafeK||6);
+      let rs2 = 999 + lvl; const R2 = () => { rs2 = (rs2 * 1664525 + 1013904223) >>> 0; return rs2 / 4294967296; };
+      const trays = [opts.safeLast]; for (let m=1;m<(W.innerSafeM||6);m++) trays.push(randomTray(R2));
+      let bestV = -Infinity, bestNode = null;
+      for (const n of top) { const r = trayRisk(n.board, trays); const v = n.score - r * (W.lastTrayLoss||60000); if (v > bestV) { bestV = v; bestNode = n; } }
+      if (bestNode) best = bestNode;
+    }
     // ---- end-game rollouts: in the last W.rollRounds rounds, re-rank the top candidates by simulating the
     //      remaining rounds with random pieces (expectimax over the unknown future) ----
     if (rollActive && cands.length > 1) {
@@ -271,7 +291,10 @@
           const cand = top[ci];
           let b = cand.board, bo = cand.bonus, mu = cand.mult, pts = cand.pts, dead = false;
           for (let k=0;k<roundsLeft && !dead;k++) {
-            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false, deep: false });
+            // inner rounds: the fast planner; on the second-to-last round it must ALSO avoid boards the final tray cannot fit
+            // (opts.safeLast → the inner plan keeps a few candidates and picks the one with the lowest final-tray risk).
+            const isPenult = (lvl + 1 + k) === 24 && (W.innerSafeK||0) > 0 && k + 1 < f.length;
+            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false, deep: false, safeLast: isPenult ? f[k + 1] : null });
             if (pl.gameOver) { dead = true; break; }
             b = pl.finalBoard; bo = pl.finalBonus; mu = pl.finalMult; pts += pl.total;
           }
@@ -360,7 +383,7 @@
       }
       if (bestNode) best = bestNode;
     }
-    return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalBonus: best.bonus, finalMult: best.mult };
+    return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalBonus: best.bonus, finalMult: best.mult, trayRisk: best.trayRisk };
   }
   global.AI = { plan, evaluate, trayFeasible, realScore, LEVELS, W, bestSingle: (b,bo,p,st,o)=>plan(b,bo,[p],st,o), evaluateBoard: (b)=>boardQuality(b, LEVELS[3]).q };
   global.AI2 = global.AI;

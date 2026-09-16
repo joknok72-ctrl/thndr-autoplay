@@ -48,15 +48,24 @@ object AI {
     @JvmField var FARM_MIN = 0.1
     @JvmField var FARM_HI_TIER = 7       // tier index of 2K in TIER
     @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
+    @JvmField var CROWD_W = 1.0          // crowding penalty weight (0 = off)
+    @JvmField var CROWD0 = 30
     @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
     @JvmField var FARM_SURV = 0.985
     @JvmField var FARM_K = 0.3
-    @JvmField var TRAY_M = 20          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
+    @JvmField var TRAY_M = 40          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
     @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
     @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
     @JvmField var ROLL_CUT = 6000.0   // successive halving threshold (per future) in the end-game rollouts
-    @JvmField var ROLL_DEATH = 0.0     // extra penalty for a dead future inside the end-game rollouts
+    @JvmField var ROLL_DEATH = 50000.0     // extra penalty for a dead future inside the end-game rollouts
     @JvmField var ROLL_M_SCALE = 2.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
+    @JvmField var TRAY2_M = 12         // look TWO trays ahead (0 = off)
+    @JvmField var TRAY2_K = 8
+    @JvmField var TRAY2_W = 0.7
+    @JvmField var LAST_TRAY_M = 60     // last-round safety: sample the final tray directly
+    @JvmField var LAST_TRAY_LOSS = 60000.0
+    @JvmField var INNER_SAFE_K = 6     // inner rollout planner: on the 2nd-to-last round keep K candidates and pick the one the final tray fits
+    @JvmField var INNER_SAFE_M = 6
     @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
     @JvmField var DEATH = 60000.0      // cost of dying (base) …
     @JvmField var DEATH_REM = 1500.0   // … plus per remaining move (farmed bonuses + 1000/cube end bonus forfeited)
@@ -202,7 +211,11 @@ object AI {
         val cleanVal = if (rem >= END_FADE) bq.empty * W_CLEAN * (1 + node.mult * 0.15) else 0.0
         val stake = if (rem > 0) rem * node.mult * STAKE else 0.0
         val surviv = if (rem > 0 && W_COVER > 0) -(1 - bq.cover) * stake * W_COVER - bq.tight * stake * W_TIGHT else 0.0
-        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal
+        // CROWDING PENALTY: P(a 3-piece tray cannot be placed) ≈ 0 below 30 cubes, ~5% at 38, ~35% at 45–50 (measured on the
+        // real deal distribution). Outside the fill phase, charge that probability × what dying would forfeit.
+        var crowd = 0.0
+        if (rem >= END_FADE && CROWD_W > 0) { var cubes = 0; for (i in 0 until N * N) if (node.board[i] != 0) cubes++; val x = maxOf(0, cubes - CROWD0) / 15.0; crowd = -x * x * CROWD_W * (stake + DEATH * 0.3) }
+        return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd
     }
 
     // ---- piece library with the REAL deal distribution (96 pieces observed across two full games; big 3x3 / 5-bars never appear) ----
@@ -395,6 +408,9 @@ object AI {
                 }
             }
             // every candidate is evaluated on ALL futures — (candidate × future) pairs run in parallel on all cores
+            // LAST ROUND SAFETY: with exactly one round left after this one, sample the final tray directly (feasibility only)
+            val lastRisk = DoubleArray(top.size)
+            if (roundsLeft == 1 && LAST_TRAY_M > 0) { val trays = (0 until LAST_TRAY_M).map { randomTray(rng) }; val lr = parallelMap(top) { cand -> trays.count { !trayFeasible(cand.board, it) }.toDouble() / trays.size }; for (i in lr.indices) lastRisk[i] = lr[i] }
             // SUCCESSIVE HALVING in 3 waves: after each wave drop candidates trailing the leader by > ROLL_CUT per future
             val sums = DoubleArray(top.size); var alive = top.indices.toList(); var used = 0
             val waves = listOf(0 until futures.size / 3, futures.size / 3 until futures.size * 2 / 3, futures.size * 2 / 3 until futures.size).filter { !it.isEmpty() }
@@ -405,7 +421,8 @@ object AI {
                     val cand = top[ci]; val f = futures[fi]
                     var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
                     for (k in 0 until roundsLeft) {
-                        val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
+                        val isPenult = (lvl + 1 + k) == 24 && INNER_SAFE_K > 0 && k + 1 < f.size
+                        val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL, if (isPenult) f[k + 1] else null)
                         if (pl == null) { dead = true; break }
                         bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
                     }
@@ -417,7 +434,7 @@ object AI {
             }
             if (used > 0) {
                 var bestAvg = Double.NEGATIVE_INFINITY
-                for (ci in alive) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
+                for (ci in alive) { val avg = sums[ci] / used - lastRisk[ci] * (banked + top[ci].pts + LAST_TRAY_LOSS); if (avg > bestAvg) { bestAvg = avg; b = top[ci] } }
             }
         } else if (trayActive && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
             // NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Sample real trays and
@@ -430,17 +447,36 @@ object AI {
             val trays = (0 until TRAY_M).map { randomTray(rng) }
             val rem2 = remAfterRound.coerceAtLeast(0)
             val risks = parallelMap(top) { cand -> trays.count { !trayFeasible(cand.board, it) }.toDouble() / trays.size }
+            val costs = DoubleArray(top.size) { DEATH + banked + DEATH_REM * rem2 + rem2 * top[it].mult * STAKE }
+            // TWO-ROUND RISK: the next tray may fit but leave a board where the tray AFTER it cannot — play each sampled tray
+            // with the fast planner and measure the second tray's infeasibility (discounted by TRAY2_W).
+            val risk2 = DoubleArray(top.size)
+            if (TRAY2_M > 0 && roundsLeft >= 2) {
+                val trays2 = (0 until TRAY2_M).map { randomTray(rng) }
+                val order = top.indices.sortedByDescending { top[it].score - risks[it] * costs[it] }.take(TRAY2_K)
+                val r2 = parallelMap(order) { i ->
+                    var bad = 0; var cnt = 0
+                    for (m in 0 until TRAY2_M) {
+                        val pl = planFull(top[i].board, top[i].bonus, trays[m % trays.size], top[i].mult, lvl + 1, 1)
+                        cnt++; if (pl == null) { bad++; continue }
+                        if (!trayFeasible(pl.board, trays2[m])) bad++
+                    }
+                    if (cnt > 0) bad.toDouble() / cnt else 0.0
+                }
+                for ((j, i) in order.withIndex()) risk2[i] = r2[j]
+            }
             var bestV = Double.NEGATIVE_INFINITY
-            for (i in top.indices) { val cost = DEATH + banked + DEATH_REM * rem2 + rem2 * top[i].mult * STAKE; val v = top[i].score - risks[i] * cost; if (v > bestV) { bestV = v; b = top[i] } }
+            for (i in top.indices) { val risk = risks[i] + (1 - risks[i]) * risk2[i] * TRAY2_W; val v = top[i].score - risk * costs[i]; if (v > bestV) { bestV = v; b = top[i] } }
         }
         return Plan(b.moves, b.pts, false, b.mult)
     }
 
     /** plan() variant used inside rollouts: returns the resulting node (board/bonus/mult/pts) or null if dead. */
-    private fun planFull(board: IntArray, bonus: IntArray, pieces: List<Piece>, mult: Int, gameLevel: Int, level: Int): Node? {
+    private fun planFull(board: IntArray, bonus: IntArray, pieces: List<Piece>, mult: Int, gameLevel: Int, level: Int, safeLast: List<Piece>? = null): Node? {
         val cfg = LEVELS[level.coerceIn(1, 3)]!!
         val lvl = gameLevel.coerceIn(1, 25); val remAfterRound = (25 - lvl) * 3
         var best: Node? = null
+        val cands = ArrayList<Node>()
         for (order in perms(pieces.indices.toList())) {
             var beam = listOf(Node(board, bonus, mult, 0, emptyList()))
             for ((step, slot) in order.withIndex()) {
@@ -455,9 +491,18 @@ object AI {
                 }
                 if (next.isEmpty()) { beam = emptyList(); break }
                 next.sortByDescending { it.score }
-                beam = next.take(if (step == order.size - 1) 1 else cfg.beam)
+                beam = next.take(if (step == order.size - 1) (if (safeLast != null) INNER_SAFE_K else 1) else cfg.beam)
             }
-            if (beam.isNotEmpty() && (best == null || beam[0].score > best.score)) best = beam[0]
+            if (beam.isNotEmpty()) { cands.addAll(beam); if (best == null || beam[0].score > best.score) best = beam[0] }
+        }
+        // SAFE-LAST (second-to-last round inside rollouts): among the kept candidates prefer the board where the FINAL tray fits
+        if (safeLast != null && best != null && cands.size > 1) {
+            cands.sortByDescending { it.score }
+            val top = cands.take(INNER_SAFE_K)
+            val rng = java.util.Random(999L + lvl)
+            val trays = ArrayList<List<Piece>>(); trays.add(safeLast); for (m in 1 until INNER_SAFE_M) trays.add(randomTray(rng))
+            var bestV = Double.NEGATIVE_INFINITY
+            for (n in top) { val r = trays.count { !trayFeasible(n.board, it) }.toDouble() / trays.size; val v = n.score - r * LAST_TRAY_LOSS; if (v > bestV) { bestV = v; best = n } }
         }
         return best
     }
