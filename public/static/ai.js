@@ -27,6 +27,8 @@
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
               farmCubes0: 0, farmCubes1: 0, farmMin: 0.25,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
+              death: 0, deathRem: 0,   // cost of dying inside a lookahead future (base + per remaining move)
+              trayM: 0, trayK: 8, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -142,6 +144,17 @@
     return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal;
   }
 
+  /** Can ALL the pieces of a tray be placed (in some order, line clears included)? Exhaustive, early exit. */
+  function trayFeasible(board, pieces) {
+    const idx = pieces.map((p,i)=>p?i:-1).filter(i=>i>=0); if (!idx.length) return true;
+    const nob = new Array(N*N).fill(0);
+    for (const i of idx) { const p = pieces[i]; for (const [r,c] of E.allPlacements(board, p)) { const res = E.place(board, nob, p, r, c, { bonusMode: 'cover' }); const rest = pieces.slice(); rest[i] = null; if (trayFeasible(res.board, rest)) return true; } }
+    return false;
+  }
+  /** P(next tray cannot be placed) estimated over M random real trays (common random numbers per call). */
+  function trayRisk(board, trays) { let bad = 0; for (const t of trays) if (!trayFeasible(board, t)) bad++; return bad / trays.length; }
+  function randomTray(R) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; return ps; }
+
   function permutations(arr) { if (arr.length<=1) return [arr]; const out=[]; arr.forEach((x,i)=>{ permutations([...arr.slice(0,i),...arr.slice(i+1)]).forEach(p=>out.push([x,...p])); }); return out; }
 
   /** plan(board, bonus, pieces[3], state{mult, level}, opts{level}) */
@@ -216,6 +229,22 @@
       for (let ci=0; ci<top.length; ci++) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
       if (bestNode) best = bestNode;
     }
+    // ---- NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Outside the
+    //      end-game rollouts, sample real trays and charge every top candidate the probability that the next tray kills us.
+    if (!rollActive && opts.rollout !== false && deep && (W.trayM||0) > 0 && roundsLeft >= 1 && cands.length > 1) {
+      let cubes0 = 0; for (let i=0;i<N*N;i++) if (best.board[i]) cubes0++;
+      if (cubes0 >= (W.trayCubes||0)) {
+        cands.sort((a,b)=>b.score-a.score);
+        const top = cands.slice(0, W.trayK||8);
+        let rs = 4242 + lvl * 15485863; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
+        const trays = []; for (let m=0;m<W.trayM;m++) trays.push(randomTray(R));
+        const rem2 = Math.max(0, remAfterRound);
+        const costs = top.map(c => (W.death||0) + (W.deathRem||0) * rem2 + rem2 * c.mult * (W.stake||12));
+        let bestV = -Infinity, bestNode = null;
+        for (let i=0;i<top.length;i++) { const risk = trayRisk(top[i].board, trays); const v = top[i].score - risk * costs[i]; top[i].trayRisk = risk; if (v > bestV) { bestV = v; bestNode = top[i]; } }
+        if (bestNode) best = bestNode;
+      }
+    }
     // ---- MID-GAME LOOKAHEAD (orange / multiplier): outside the end-game, re-rank the top candidates by a 1-round
     //      rollout with random next pieces (fast planner) + the heuristic value of the resulting position.
     //      This is what tells apart "orange parked where the next round can clear it" from "orange buried".
@@ -239,7 +268,9 @@
         let sum = 0;
         for (const f of futures) {
           const pl = plan(cand.board, cand.bonus, f, { mult: cand.mult, level: lvl + 1 }, { level: W.midRollLevel||1, rollout: false, deep: false });
-          if (pl.gameOver) { sum += cand.pts - rem2 * cand.mult * (W.stake||12); continue; }
+          // A dead future forfeits EVERYTHING still to come: the remaining moves' points, the farmed bonus cells and the
+          // 1000/cube end bonus. Charge a realistic death cost (base + per remaining move) instead of a token penalty.
+          if (pl.gameOver) { sum += cand.pts - ((W.death||0) + (W.deathRem||0) * rem2 + rem2 * cand.mult * (W.stake||12)); continue; }
           const nn = { board: pl.finalBoard, bonus: pl.finalBonus, mult: pl.finalMult, pts: cand.pts + pl.total };
           sum += evaluate(nn, { mult0, remaining: rem2 }, cfg);
         }

@@ -43,6 +43,14 @@ object AI {
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
     @JvmField var W_FARM = 1.2         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
     @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
+    @JvmField var FARM_CUBES0 = 25     // farming value starts fading at this many cubes on the board …
+    @JvmField var FARM_CUBES1 = 45     // … and is down to FARM_MIN here (measured: removes the mid-game deaths)
+    @JvmField var FARM_MIN = 0.1
+    @JvmField var TRAY_M = 12          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
+    @JvmField var TRAY_K = 8           // re-rank the top-K plans by P(next tray cannot be placed)
+    @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
+    @JvmField var DEATH = 60000.0      // cost of dying (base) …
+    @JvmField var DEATH_REM = 1500.0   // … plus per remaining move (farmed bonuses + 1000/cube end bonus forfeited)
     private val TIER = intArrayOf(50, 150, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 0.3
@@ -137,7 +145,10 @@ object AI {
         // round, one of them grows a tier each level (50→150→300→500→1K→2K). "Farming": value uncovered cells by their
         // expected FUTURE value (they grow, and the multiplier grows) as long as enough moves remain to cash them in.
         var bonusPot = 0.0
-        var nB = 0; for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) nB++
+        var nB = 0; var nCubes = 0; for (i in 0 until N * N) { if (node.bonus[i] != 0 && node.board[i] == 0) nB++; if (node.board[i] != 0) nCubes++ }
+        // SAFETY: 3 uncovered bonus cells lock up to 9 lines (their rows/cols/boxes cannot clear). On a crowded board that is how
+        // games die — so the farming value fades out with crowding (the planner then cashes a cell in, which frees its lines).
+        val farmScale = if (FARM_CUBES1 > FARM_CUBES0) maxOf(FARM_MIN, minOf(1.0, (FARM_CUBES1 - nCubes).toDouble() / (FARM_CUBES1 - FARM_CUBES0))) else 1.0
         for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) {
             if (W_FARM > 0) {
                 var t = TIER.indexOf(node.bonus[i]); if (t < 0) { t = 0; while (t < TIER.size - 1 && TIER[t + 1] <= node.bonus[i]) t++ }
@@ -146,7 +157,7 @@ object AI {
                 val fut = t + steps; val lo = fut.toInt().coerceIn(0, TIER.size - 1); val hi = minOf(TIER.size - 1, lo + 1)
                 val fv = TIER[lo] + (TIER[hi] - TIER[lo]) * (fut - lo)
                 val multFut = node.mult + minOf(roundsLeft, 25.0) * 0.8
-                if (rem >= 3) bonusPot += fv * multFut * W_FARM * 0.3
+                if (rem >= 3) bonusPot += fv * multFut * W_FARM * farmScale * 0.3
             } else if (rem > 3) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
         }
         val survW = W_SURV * minOf(1.0, rem / 15.0) * (1 + node.mult * 0.15) * 4
@@ -226,6 +237,19 @@ object AI {
         for (t in LIB) { x -= t.second; if (x <= 0 && t.second > 0) { pick = t; break } }
         val a = pick.third
         return Piece((0 until a.size / 2).map { Cell(a[it * 2], a[it * 2 + 1], 1) })
+    }
+
+    /** Can ALL the pieces of a tray be placed in some order (line clears included)? Exhaustive with early exit. */
+    fun trayFeasible(board: IntArray, pieces: List<Piece?>): Boolean {
+        val idx = pieces.indices.filter { pieces[it] != null }; if (idx.isEmpty()) return true
+        val nob = IntArray(N * N)
+        for (i in idx) { val p = pieces[i]!!; for (rc in Engine.allPlacements(board, p)) { val res = Engine.place(board, nob, p, rc[0], rc[1]); val rest = pieces.toMutableList(); rest[i] = null; if (trayFeasible(res.board, rest)) return true } }
+        return false
+    }
+    private fun randomTray(rng: java.util.Random): List<Piece> {
+        val ps = (0 until 3).map { randomPiece(rng) }
+        val oi = rng.nextInt(3); val op = ps[oi]; val ci = rng.nextInt(op.cells.size)
+        return ps.mapIndexed { i, p -> if (i == oi) Piece(p.cells.mapIndexed { j, c -> if (j == ci) Cell(c.r, c.c, 2) else c }) else p }
     }
 
     private val LIBP: List<Pair<Piece, Double>> = LIB.filter { it.second > 0 }.map { t -> Piece((0 until t.third.size / 2).map { Cell(t.third[it * 2], t.third[it * 2 + 1], 1) }) to t.second }
@@ -347,6 +371,17 @@ object AI {
                 var bestAvg = Double.NEGATIVE_INFINITY
                 for (ci in top.indices) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
             }
+        } else if (deep && rollout && TRAY_M > 0 && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
+            // NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Sample real trays and
+            // charge every top candidate the probability that the next tray has no legal placement (= death) — in parallel.
+            cands.sortByDescending { it.score }
+            val top = cands.take(TRAY_K)
+            val rng = java.util.Random(4242L + lvl * 15485863L)
+            val trays = (0 until TRAY_M).map { randomTray(rng) }
+            val rem2 = remAfterRound.coerceAtLeast(0)
+            val risks = parallelMap(top) { cand -> trays.count { !trayFeasible(cand.board, it) }.toDouble() / trays.size }
+            var bestV = Double.NEGATIVE_INFINITY
+            for (i in top.indices) { val cost = DEATH + DEATH_REM * rem2 + rem2 * top[i].mult * STAKE; val v = top[i].score - risks[i] * cost; if (v > bestV) { bestV = v; b = top[i] } }
         }
         return Plan(b.moves, b.pts, false, b.mult)
     }
