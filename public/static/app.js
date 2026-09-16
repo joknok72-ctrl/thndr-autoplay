@@ -220,7 +220,7 @@
   let worker = null, reqId = 0;
   function getWorker() { if (worker) return worker; try { worker = new Worker('/static/ai-worker.js?v=3'); } catch { worker = null; } return worker; }
   function runAI(pieces) {
-    const payload = { board: S.board, bonus: S.bonus, pieces, state: { streak: S.streak, mult: S.mult, level: S.level }, opts: { level: settings.aiLevel, bonusMode: settings.bonusMode, fillMoves: settings.fillLevels * 3, clean: settings.clean } };
+    const payload = { board: S.board, bonus: S.bonus, pieces, state: { streak: S.streak, mult: S.mult, level: S.level, score: S.score }, opts: { level: settings.aiLevel, bonusMode: settings.bonusMode, fillMoves: settings.fillLevels * 3, clean: settings.clean } };
     const w = getWorker();
     if (!w) return Promise.resolve(window.AI.plan(board(), S.bonus.slice(), pieces, payload.state, payload.opts));
     return new Promise((res, rej) => {

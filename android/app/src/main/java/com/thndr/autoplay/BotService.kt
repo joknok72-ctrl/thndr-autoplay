@@ -60,6 +60,8 @@ class BotService : Service() {
     // If the OCR misses a frame (returns 1) we keep the last good value — otherwise the planner would think 70 moves remain
     // and never switch to the end-game fill strategy.
     private var memLevel = 1; private var memMult = 1
+    /** Points banked so far this game (sum of executed plan totals — matches the real score within ~1% in the logs). Lost on death. */
+    private var bankedScore = 0
     /** Strategy knobs from settings → planner fields. */
     private fun applyStrategy() {
         AI.END_FADE = prefs.getInt("fillMoves", 9).coerceIn(3, 15)              // fill the board in the last N moves (3 per level)
@@ -82,7 +84,7 @@ class BotService : Service() {
         val newGame = scr.level <= 1 && scr.mult <= 1 && cubes <= 6
         if (newGame) {
             if (memLevel > 1 || memMult > 1) { GameLog.newGame(this); guide?.flash("🆕 اتعرفت على جولة جديدة (لفل 1 · 1X)", 1500) }
-            memLevel = 1; memMult = 1; return scr
+            memLevel = 1; memMult = 1; bankedScore = 0; return scr
         }
         // OCR result is trusted when plausible (never goes backwards by more than 1); otherwise keep the memory.
         val lvl = if (scr.level in 2..25 && scr.level >= memLevel - 1) scr.level else memLevel
@@ -236,7 +238,7 @@ class BotService : Service() {
                     applyStrategy()
                     val deep = prefs.getBoolean("deepEnd", true)
                     if (deep && ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25) — زي الموقع بالضبط، استنى شوية…")
-                    val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3), deep)
+                    val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 3), deep, true, bankedScore)
                     if (plan.gameOver || plan.moves.isEmpty()) {
                         runCatching { GameLog.record(this, ps, confirmed, plan, pendingBitmap, "GAME_OVER: no placement for any order") }; pendingBitmap = null
                         guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue
@@ -248,7 +250,7 @@ class BotService : Service() {
                                    else RectF(m.slot * slotW + slotW * 0.2f, ps.by1 + ps.pitch * 3.2f, (m.slot + 1) * slotW - slotW * 0.2f, ps.by1 + ps.pitch * 5.2f)
                         GuideOverlay.Step(piece, rect, m.slot, m.r, m.c, m.points)
                     }
-                    cur = 0; frozen = ps
+                    cur = 0; frozen = ps; bankedScore += plan.total
                     vibrate(longArrayOf(0, 30, 40, 30))
                     val phase = if (75 - (ps.level - 1) * 3 <= AI.END_FADE + 2) " · مرحلة الملء" else ""
                     guide?.flash("الخطة جاهزة (${ps.mult}X · لفل ${ps.level}$phase · ${lastThreads}/${AI.CORES} كور) — +${plan.total} نقطة")
@@ -350,7 +352,7 @@ class BotService : Service() {
 
                 val pieces = scr.tray.map { it?.piece }
                 report("بفكر… (${scr.piecesFound} قطع)"); applyStrategy()
-                val plan = AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, prefs.getInt("level", 3).coerceIn(1, 3), prefs.getBoolean("deepEnd", true))
+                val plan = AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, prefs.getInt("level", 3).coerceIn(1, 3), prefs.getBoolean("deepEnd", true), true, bankedScore)
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!

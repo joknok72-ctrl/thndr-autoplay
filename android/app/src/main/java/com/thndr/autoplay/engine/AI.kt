@@ -41,20 +41,23 @@ object AI {
     @JvmField var W_SURV = 4.0         // survival weight (re-tuned on the REAL piece distribution: 0 deaths / 20 games)
     @JvmField var W_ORANGE = 0.3       // oranges parked in near-complete lines
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
-    @JvmField var W_FARM = 1.2         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
+    @JvmField var W_FARM = 2.0         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
     @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
     @JvmField var FARM_CUBES0 = 25     // farming value starts fading at this many cubes on the board …
     @JvmField var FARM_CUBES1 = 45     // … and is down to FARM_MIN here (measured: removes the mid-game deaths)
     @JvmField var FARM_MIN = 0.1
-    @JvmField var TRAY_M = 12          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
-    @JvmField var TRAY_K = 8           // re-rank the top-K plans by P(next tray cannot be placed)
+    @JvmField var TRAY_M = 20          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
+    @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
+    @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
+    @JvmField var ROLL_DEATH = 0.0     // extra penalty for a dead future inside the end-game rollouts
+    @JvmField var ROLL_M_SCALE = 4.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
     @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
     @JvmField var DEATH = 60000.0      // cost of dying (base) …
     @JvmField var DEATH_REM = 1500.0   // … plus per remaining move (farmed bonuses + 1000/cube end bonus forfeited)
     private val TIER = intArrayOf(50, 150, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
-    @JvmField var W_TIGHT = 0.3
-    @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
+    @JvmField var W_TIGHT = 1.0
+    @JvmField var STAKE = 24.0         // ≈ points per remaining move per multiplier unit
     @JvmField var W_CLEAN = 0.0        // clean-board style: reward per empty cell before the fill phase (player's strategy)
     @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)
     @JvmField var END_FADE = 9         // the end-bonus fades in over the last N moves
@@ -305,14 +308,16 @@ object AI {
      * @param rollout end-game rollouts (last ROLL_ROUNDS rounds): re-rank the best candidates by simulating the
      *                remaining rounds with random pieces — same futures for every candidate.
      */
-    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = true, rollout: Boolean = true): Plan {
+    fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = true, rollout: Boolean = true, gameScore: Int = 0): Plan {
         val cfg = LEVELS[level.coerceIn(1, 3)]!!
         val slots = pieces.indices.filter { pieces[it] != null }
         if (slots.isEmpty()) return Plan(emptyList(), 0, false, mult)
         val mult0 = maxOf(1, mult); val lvl = gameLevel.coerceIn(1, 25)
+        val banked = maxOf(0, gameScore).toDouble()   // points already scored — ALL of it is lost on death
         val remAfterRound = (25 - lvl) * 3
         val roundsLeft = 25 - lvl
         val rollActive = deep && rollout && ROLL_ROUNDS > 0 && roundsLeft in 0 until ROLL_ROUNDS
+        val trayActive = !rollActive && deep && rollout && TRAY_M > 0
         var best: Node? = null
         val cands = ArrayList<Node>()
         // MULTI-CORE: the 6 piece orderings are independent → one task per ordering on all available cores
@@ -330,7 +335,7 @@ object AI {
                 }
                 if (next.isEmpty()) { beam = emptyList(); break }
                 next.sortByDescending { it.score }
-                val keep = if (step == order.size - 1) (if (rollActive) ROLL_K else 1)
+                val keep = if (step == order.size - 1) (if (rollActive) ROLL_K else if (trayActive) maxOf(TRAY_K, TRAY_K_OPEN) else 1)
                            else if (deep && remaining <= END_BEAM_REM) maxOf(cfg.beam, END_BEAM) else cfg.beam
                 beam = next.take(keep)
             }
@@ -345,7 +350,9 @@ object AI {
             for (n in cands.sortedByDescending { it.pts + it.board.count { v -> v != 0 } * END_CUBE }) { if (top.size >= ROLL_K + ROLL_K_FILL) break; if (n !in top) top.add(n) }
             for (n in cands.sortedByDescending { it.pts }) { if (top.size >= ROLL_K + ROLL_K_FILL + ROLL_K_PTS) break; if (n !in top) top.add(n) }
             val rng = java.util.Random(12345L + lvl * 7919L)
-            val futures = (0 until ROLL_M).map {
+            // more futures when fewer rounds remain (same cost): the last round's risk of an unplaceable tray must be sampled well
+            val nFut = maxOf(ROLL_M, Math.round(ROLL_M * (ROLL_ROUNDS.toDouble() / maxOf(1, roundsLeft)) * ROLL_M_SCALE).toInt())
+            val futures = (0 until nFut).map {
                 (0 until roundsLeft).map {
                     val ps = (0 until 3).map { randomPiece(rng) }
                     val oi = rng.nextInt(3); val op = ps[oi]; val ci = rng.nextInt(op.cells.size)
@@ -362,7 +369,7 @@ object AI {
                     if (pl == null) { dead = true; break }
                     bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
                 }
-                if (!dead) pts += bd.count { it != 0 } * END_CUBE
+                if (!dead) pts += bd.count { it != 0 } * END_CUBE else pts -= ROLL_DEATH + banked
                 pts
             }
             val sums = DoubleArray(top.size); for ((j, v) in vals.withIndex()) sums[jobs[j].first] += v
@@ -371,17 +378,19 @@ object AI {
                 var bestAvg = Double.NEGATIVE_INFINITY
                 for (ci in top.indices) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
             }
-        } else if (deep && rollout && TRAY_M > 0 && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
+        } else if (trayActive && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
             // NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Sample real trays and
             // charge every top candidate the probability that the next tray has no legal placement (= death) — in parallel.
             cands.sortByDescending { it.score }
-            val top = cands.take(TRAY_K)
+            // candidate pool: heuristic top-K plus the most OPEN boards (fewest cubes) — the safe plan is often not in the top-K
+            val top = ArrayList(cands.take(TRAY_K))
+            if (TRAY_K_OPEN > 0) for (n in cands.sortedBy { it.board.count { v -> v != 0 } }) { if (top.size >= TRAY_K + TRAY_K_OPEN) break; if (n !in top) top.add(n) }
             val rng = java.util.Random(4242L + lvl * 15485863L)
             val trays = (0 until TRAY_M).map { randomTray(rng) }
             val rem2 = remAfterRound.coerceAtLeast(0)
             val risks = parallelMap(top) { cand -> trays.count { !trayFeasible(cand.board, it) }.toDouble() / trays.size }
             var bestV = Double.NEGATIVE_INFINITY
-            for (i in top.indices) { val cost = DEATH + DEATH_REM * rem2 + rem2 * top[i].mult * STAKE; val v = top[i].score - risks[i] * cost; if (v > bestV) { bestV = v; b = top[i] } }
+            for (i in top.indices) { val cost = DEATH + banked + DEATH_REM * rem2 + rem2 * top[i].mult * STAKE; val v = top[i].score - risks[i] * cost; if (v > bestV) { bestV = v; b = top[i] } }
         }
         return Plan(b.moves, b.pts, false, b.mult)
     }

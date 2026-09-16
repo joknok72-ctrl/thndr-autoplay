@@ -22,21 +22,21 @@
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
               orange: 0.3, orangeMode: 0,    // oranges parked in near-complete lines (fraction of full mult value)
-              bonusKeep: 0.4, farm: 1.2, farmRate: 0.33, // uncovered bonus cells: keep them coverable
-              cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
+              bonusKeep: 0.4, farm: 2.0, farmRate: 0.33, // uncovered bonus cells: keep them coverable
+              cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
-              farmCubes0: 0, farmCubes1: 0, farmMin: 0.25,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
+              farmCubes0: 25, farmCubes1: 45, farmMin: 0.1,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
-              death: 0, deathRem: 0,   // cost of dying inside a lookahead future (base + per remaining move)
+              death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
               rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
-              rollMScale: 1,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
-              trayM: 0, trayK: 8, trayKOpen: 0, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
+              rollMScale: 4,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
+              trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
               midRollM: 0, midRollK: 6, midRollLevel: 1,   // mid-game 1-round lookahead (0 = off)
-              rollRounds: 3, rollK: 5, rollKFill: 3, rollKPts: 2, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
+              rollRounds: 3, rollK: 5, rollKFill: 3, rollKPts: 2, rollKOpen: 6, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
             }, global.AI2_W || global.AI_W || {});
 
   /** Real THNDR scoring. */
@@ -190,7 +190,7 @@
         if (!next.length) { beam = []; break; }
         next.sort((a,b)=>b.score-a.score);
         const trayActive = !rollActive && deep && opts.rollout !== false && (W.trayM||0) > 0;
-        beam = next.slice(0, step===order.length-1 ? (rollActive ? W.rollK : (trayActive ? Math.max(W.trayK||8, W.trayKOpen||0) : 1)) : ((deep && remaining <= W.endBeamRem) ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
+        beam = next.slice(0, step===order.length-1 ? (rollActive ? Math.max(W.rollK, W.rollKOpen||0, W.rollKFill||0) : (trayActive ? Math.max(W.trayK||8, W.trayKOpen||0) : 1)) : ((deep && remaining <= W.endBeamRem) ? Math.max(cfg.beam, W.endBeam) : cfg.beam));
       }
       if (beam.length) { for (const b of beam) cands.push(b); if (!best || beam[0].score > best.score) best = beam[0]; }
     }
@@ -207,6 +207,8 @@
       for (const n of byFill) { if (top.length >= W.rollK + (W.rollKFill||3)) break; if (!top.includes(n)) top.push(n); }
       const byPts = cands.slice().sort((a,b)=>b.pts-a.pts);
       for (const n of byPts) { if (top.length >= W.rollK + (W.rollKFill||3) + (W.rollKPts||2)) break; if (!top.includes(n)) top.push(n); }
+      // + the most OPEN boards (fewest cubes): when the tray of the next round may not fit, the safe line is rarely in the top-K
+      if ((W.rollKOpen||0) > 0) { const cubesOf = n => { let c=0; for (let i=0;i<N*N;i++) if (n.board[i]) c++; return c; }; const byOpen = cands.slice().sort((a,b)=>cubesOf(a)-cubesOf(b)); for (const n of byOpen) { if (top.length >= W.rollK + (W.rollKFill||3) + (W.rollKPts||2) + W.rollKOpen) break; if (!top.includes(n)) top.push(n); } }
       let rs = 12345 + lvl * 7919; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
       // same random future for every candidate (common random numbers → fair comparison)
       const futures = [];
