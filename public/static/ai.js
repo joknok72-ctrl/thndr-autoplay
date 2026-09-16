@@ -24,6 +24,9 @@
               orange: 0.3, orangeMode: 0,    // oranges parked in near-complete lines (fraction of full mult value)
               bonusKeep: 0.4, farm: 1.2, farmRate: 0.33, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 0.3, stake: 12, clean: 0,   // real-piece survivability (0 = off)
+              riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
+              farmCubes0: 0, farmCubes1: 0, farmMin: 0.25,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
+              dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -103,7 +106,10 @@
     // multiplier grows, so covering later is worth more — as long as enough moves remain to cash them in.
     let bonusPot = 0;
     const TIER = [50,150,300,500,750,1000,1500,2000,3000,5000,7500,10000];
-    let nB = 0; for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) nB++;
+    let nB = 0, nCubes = 0; for (let i=0;i<N*N;i++) { if (node.bonus[i] && !node.board[i]) nB++; if (node.board[i]) nCubes++; }
+    // SAFETY: 3 uncovered bonus cells lock up to 9 lines (their rows/cols/boxes cannot clear). On a crowded board that is
+    // how games die — so the farming value fades out with crowding (the planner then cashes a cell in, which frees its lines).
+    const farmScale = W.farmCubes1 > W.farmCubes0 ? Math.max(W.farmMin, Math.min(1, (W.farmCubes1 - nCubes) / (W.farmCubes1 - W.farmCubes0))) : 1;
     for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) {
       if (W.farm > 0) {
         const v = node.bonus[i]; let t = TIER.indexOf(v); if (t < 0) { t = 0; while (t < TIER.length-1 && TIER[t+1] <= v) t++; }
@@ -113,7 +119,7 @@
         const fut = t + steps; const lo = Math.floor(fut), hi = Math.min(TIER.length-1, lo+1); const fv = TIER[lo] + (TIER[hi]-TIER[lo])*(fut-lo);
         const multFut = node.mult + Math.min(roundsLeft, 25) * 0.8;      // multiplier keeps growing ~0.8/round
         const cash = rem >= 3 ? 1 : 0;                                   // must still have moves to cover it
-        bonusPot += fv * multFut * W.farm * cash * (W.bonusKeep > 0 ? 1 : 1) * 0.3;
+        bonusPot += fv * multFut * W.farm * farmScale * cash * 0.3;
       } else {
         bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
       }
@@ -121,7 +127,9 @@
     const survW = W.surv * Math.max(W.survFloor||0, Math.min(1, rem / 15)) * (1 + node.mult * 0.15) * 4;
     // DYING = losing everything still to come (remaining moves × mult × ~12 pts) AND the 1000/cube end bonus.
     // survivability: (1-cover) is the chance the next dealt piece has NO place at all.
-    const stake = rem > 0 ? rem * node.mult * (W.stake||12) : 0;
+    // riskBonus/riskEnd: dying ALSO forfeits the farmed bonus cells and the 1000/cube end bonus — count them in the stake.
+    let stake = rem > 0 ? rem * node.mult * (W.stake||12) : 0;
+    if (rem > 0) stake += bonusPot * (W.riskBonus||0) + (W.riskEnd||0) * Math.min(1, (75 - rem) / 30);
     // CLEAN-BOARD PHASE (player's strategy): before the fill phase, reward an empty board — every empty cell keeps the
     // board flexible and every clear pays 20×mult; the reward scales with the multiplier (what a future line is worth).
     const cleanVal = rem >= W.endFade ? bq.empty * (W.clean||0) * (1 + node.mult * 0.15) : 0;
@@ -211,13 +219,20 @@
     // ---- MID-GAME LOOKAHEAD (orange / multiplier): outside the end-game, re-rank the top candidates by a 1-round
     //      rollout with random next pieces (fast planner) + the heuristic value of the resulting position.
     //      This is what tells apart "orange parked where the next round can clear it" from "orange buried".
-    const midActive = !rollActive && opts.rollout !== false && deep && (W.midRollM||0) > 0 && roundsLeft >= 1 && cands.length > 1;
+    let danger = false;
+    if (!rollActive && opts.rollout !== false && deep && roundsLeft >= 1 && cands.length > 1 && (W.midRollM||0) === 0) {
+      let cubes0 = 0; for (let i=0;i<N*N;i++) if (board[i]) cubes0++;
+      let cov = 1; if (W.dangerCover > 0) cov = boardQuality(best.board, cfg).cover;
+      danger = cubes0 >= W.dangerCubes || cov < W.dangerCover;
+    }
+    const midActive = !rollActive && opts.rollout !== false && deep && ((W.midRollM||0) > 0 || danger) && roundsLeft >= 1 && cands.length > 1;
     if (midActive) {
+      const MM = danger ? (W.dangerM||4) : W.midRollM, KK = danger ? (W.dangerK||6) : (W.midRollK||6);
       cands.sort((a,b)=>b.score-a.score);
-      const top = cands.slice(0, W.midRollK||6);
+      const top = cands.slice(0, KK);
       let rs = 777 + lvl * 104729; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
       const futures = [];
-      for (let m=0;m<W.midRollM;m++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; futures.push(ps); }
+      for (let m=0;m<MM;m++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; futures.push(ps); }
       const rem2 = Math.max(0, remAfterRound - 3);
       let bestAvg = -Infinity, bestNode = null;
       for (const cand of top) {
