@@ -89,7 +89,7 @@ object ScreenParser {
         // connected components (4-neighbour)
         val lab = IntArray(w * h); val stack = IntArray(w * h + 1); var n = 0
         class C(val id: Int, var x0: Int, var y0: Int, var x1: Int, var y1: Int)
-        val comps = ArrayList<C>()
+        val comps = ArrayList<C>(); val dots = ArrayList<C>()
         for (s in 0 until w * h) {
             if (!m[s] || lab[s] != 0) continue
             n++; var sp = 0; stack[sp++] = s; lab[s] = n
@@ -104,6 +104,7 @@ object ScreenParser {
             }
             val gh = c.y1 - c.y0 + 1; val gw = c.x1 - c.x0 + 1; val cyf = (c.y0 + c.y1) / 2f / h
             if (gh >= h * 0.22f && gh <= h * 0.5f && gw >= 3 && gw <= gh * 1.15f && cyf > 0.3f && cyf < 0.7f) comps.add(c)
+            else if (gh <= h * 0.12f && gw <= h * 0.12f && gh >= 2 && gw >= 2 && cyf > 0.45f && cyf < 0.7f) dots.add(c)   // decimal point of "1.5K"
         }
         if (comps.isEmpty()) return 50
         comps.sortBy { it.x0 }
@@ -140,14 +141,21 @@ object ScreenParser {
             // "NNK" (10K, 12K…): last glyph is a solid K, first two are digits
             if (ar[2] >= 0.55f && solid(glyphOf(best[2])) && !hollow(glyphOf(best[2]))) {
                 val a = readGlyphAmong(glyphOf(best[0]), "123456789"); val b = readGlyphAmong(glyphOf(best[1]), "0123456789")
-                return ((a - '0') * 10 + (b - '0')) * 1000
+                val dotted = dots.any { d -> d.x0 >= best[0].x1 - 1 && d.x1 <= best[1].x0 + 1 }
+                return if (dotted) (a - '0') * 1000 + (b - '0') * 100 else ((a - '0') * 10 + (b - '0')) * 1000
             }
             // 150 / 300 / 500: 2nd & 3rd glyphs are wide, last one is a hollow 0
             if (ar[1] < 0.55f || ar[1] > 0.95f || ar[2] < 0.55f || ar[2] > 0.95f || !hollow(glyphOf(best[2]))) return 50
-            val c = readGlyphAmong(glyphOf(best[0]), "135")
+            val c = readGlyphAmong(glyphOf(best[0]), "1357")
             if (c == '1' && ar[0] > 0.55f) return 50                     // a '1' must be narrow
             if (c != '1' && ar[0] < 0.5f) return 50
-            return when (c) { '1' -> 150; '3' -> 300; else -> 500 }
+            return when (c) { '1' -> 150; '3' -> 300; '7' -> 750; else -> 500 }
+        }
+        // decimal point? a tiny blob sitting at the baseline between two glyphs → "1.5K" / "2.5K" …
+        fun dotBetween(a: C, b: C): Boolean = dots.any { d -> d.x0 >= a.x1 - 1 && d.x1 <= b.x0 + 1 && d.y1 >= a.y1 - (a.y1 - a.y0) * 0.35f }
+        if (ng == 3 && ar[2] >= 0.55f && solid(glyphOf(best[2])) && dotBetween(best[0], best[1])) {
+            val a = readGlyphAmong(glyphOf(best[0]), "123456789"); val b = readGlyphAmong(glyphOf(best[1]), "0123456789")
+            return (a - '0') * 1000 + (b - '0') * 100
         }
         // n == 2 → "50" or "NK" (1K…9K): K is wide and solid; "50" has a hollow 0
         if (ar[1] >= 0.55f && solid(glyphOf(best[1]))) {

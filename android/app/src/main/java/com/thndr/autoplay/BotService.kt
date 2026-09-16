@@ -64,6 +64,17 @@ class BotService : Service() {
     private fun applyStrategy() {
         AI.END_FADE = prefs.getInt("fillMoves", 9).coerceIn(3, 15)              // fill the board in the last N moves (3 per level)
         AI.W_CLEAN = 0.0                                                          // clean-board style removed (scored lower in tests)
+        tuneThreads()
+    }
+    /** Size the planner's thread pool from the RAM that is free RIGHT NOW (the game + system keep the rest). All cores when RAM is free. */
+    var lastThreads = AI.CORES
+    private fun tuneThreads() {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo(); am.getMemoryInfo(mi)
+            // availMem already excludes what the game/other apps hold; keep the system's low-memory threshold as a safety margin
+            lastThreads = AI.tuneThreads(mi.availMem - mi.threshold, mi.totalMem)
+        } catch (_: Throwable) { lastThreads = AI.tuneThreads(-1, -1) }
     }
     private fun fixHud(scr: Screen): Screen {
         val cubes = scr.board.count { it != 0 }
@@ -240,7 +251,7 @@ class BotService : Service() {
                     cur = 0; frozen = ps
                     vibrate(longArrayOf(0, 30, 40, 30))
                     val phase = if (75 - (ps.level - 1) * 3 <= AI.END_FADE + 2) " · مرحلة الملء" else ""
-                    guide?.flash("الخطة جاهزة (${ps.mult}X · لفل ${ps.level}$phase) — +${plan.total} نقطة")
+                    guide?.flash("الخطة جاهزة (${ps.mult}X · لفل ${ps.level}$phase · ${lastThreads}/${AI.CORES} كور) — +${plan.total} نقطة")
                     runCatching { GameLog.record(this, ps, confirmed, plan, pendingBitmap) }; pendingBitmap = null
                 }
                 if (manualNext) {

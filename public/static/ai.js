@@ -102,7 +102,7 @@
     // farm > 0 turns on "bonus farming": value uncovered cells by their expected future value — they grow and the
     // multiplier grows, so covering later is worth more — as long as enough moves remain to cash them in.
     let bonusPot = 0;
-    const TIER = [50,150,300,500,1000,2000,3000,4000,5000,6000,8000,10000];
+    const TIER = [50,150,300,500,750,1000,1500,2000,3000,5000,7500,10000];
     let nB = 0; for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) nB++;
     for (let i=0;i<N*N;i++) if (node.bonus[i] && !node.board[i]) {
       if (W.farm > 0) {

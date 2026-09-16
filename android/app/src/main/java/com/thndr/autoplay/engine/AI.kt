@@ -43,7 +43,7 @@ object AI {
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
     @JvmField var W_FARM = 1.2         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
     @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
-    private val TIER = intArrayOf(50, 150, 300, 500, 1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000)
+    private val TIER = intArrayOf(50, 150, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 0.3
     @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
@@ -231,10 +231,41 @@ object AI {
     private val LIBP: List<Pair<Piece, Double>> = LIB.filter { it.second > 0 }.map { t -> Piece((0 until t.third.size / 2).map { Cell(t.third[it * 2], t.third[it * 2 + 1], 1) }) to t.second }
     private val LIBW: Double = LIBP.sumOf { it.second }.coerceAtLeast(1.0)
 
-    /** Run [f] over [items] on a shared thread pool sized to the device's cores (falls back to sequential on any error). */
-    private val POOL: java.util.concurrent.ExecutorService by lazy { java.util.concurrent.Executors.newFixedThreadPool(maxOf(2, Runtime.getRuntime().availableProcessors())) }
+    /** Shared thread pool. Its size is re-tuned before every plan from the RAM that is actually free (see [setThreads] / [tuneThreads]). */
+    val CORES: Int = maxOf(1, Runtime.getRuntime().availableProcessors())
+    @Volatile var threads: Int = CORES
+    private val POOL: java.util.concurrent.ThreadPoolExecutor by lazy {
+        java.util.concurrent.ThreadPoolExecutor(CORES, CORES, 30, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue()).also { it.allowCoreThreadTimeOut(true) }
+    }
+    /** Resize the pool to [n] worker threads (1..CORES). */
+    fun setThreads(n: Int) {
+        val t = n.coerceIn(1, CORES)
+        threads = t
+        try {
+            if (t >= POOL.maximumPoolSize) { POOL.maximumPoolSize = t; POOL.corePoolSize = t } else { POOL.corePoolSize = t; POOL.maximumPoolSize = t }
+        } catch (_: Throwable) {}
+    }
+    /**
+     * Choose the thread count from the memory that is really free right now:
+     *  - [availSys]  = free system RAM in bytes (ActivityManager.MemoryInfo.availMem − threshold), or -1 if unknown
+     *  - [totalSys]  = total system RAM in bytes, or -1 if unknown
+     * Each planning thread needs roughly 96 MB of system RAM and ~24 MB of Java heap. If the system is mostly free (≥ 45 % of RAM
+     * available) we take every core; otherwise we use only what the free RAM affords — never fewer than one thread.
+     */
+    fun tuneThreads(availSys: Long, totalSys: Long): Int {
+        val rt = Runtime.getRuntime()
+        val heapFree = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
+        var n = CORES
+        if (availSys >= 0) {
+            val mostlyFree = totalSys > 0 && availSys >= totalSys * 0.45
+            if (!mostlyFree) n = minOf(n, (availSys / (96L shl 20)).toInt())
+        }
+        n = minOf(n, (heapFree / (24L shl 20)).toInt())
+        setThreads(maxOf(1, n))
+        return threads
+    }
     fun <T, R> parallelMap(items: List<T>, f: (T) -> R): List<R> {
-        if (items.size <= 1) return items.map(f)
+        if (items.size <= 1 || threads <= 1) return items.map(f)
         return try {
             val futs = items.map { it -> POOL.submit(java.util.concurrent.Callable { f(it) }) }
             futs.map { it.get() }
