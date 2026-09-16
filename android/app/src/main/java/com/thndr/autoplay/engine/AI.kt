@@ -233,14 +233,14 @@ object AI {
 
     /** Shared thread pool. Its size is re-tuned before every plan from the RAM that is actually free (see [setThreads] / [tuneThreads]). */
     val CORES: Int = maxOf(1, Runtime.getRuntime().availableProcessors())
-    @Volatile var threads: Int = CORES
+    @Volatile var threadCount: Int = CORES
     private val POOL: java.util.concurrent.ThreadPoolExecutor by lazy {
         java.util.concurrent.ThreadPoolExecutor(CORES, CORES, 30, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue()).also { it.allowCoreThreadTimeOut(true) }
     }
     /** Resize the pool to [n] worker threads (1..CORES). */
     fun setThreads(n: Int) {
         val t = n.coerceIn(1, CORES)
-        threads = t
+        threadCount = t
         try {
             if (t >= POOL.maximumPoolSize) { POOL.maximumPoolSize = t; POOL.corePoolSize = t } else { POOL.corePoolSize = t; POOL.maximumPoolSize = t }
         } catch (_: Throwable) {}
@@ -262,10 +262,10 @@ object AI {
         }
         n = minOf(n, (heapFree / (24L shl 20)).toInt())
         setThreads(maxOf(1, n))
-        return threads
+        return threadCount
     }
     fun <T, R> parallelMap(items: List<T>, f: (T) -> R): List<R> {
-        if (items.size <= 1 || threads <= 1) return items.map(f)
+        if (items.size <= 1 || threadCount <= 1) return items.map(f)
         return try {
             val futs = items.map { it -> POOL.submit(java.util.concurrent.Callable { f(it) }) }
             futs.map { it.get() }
