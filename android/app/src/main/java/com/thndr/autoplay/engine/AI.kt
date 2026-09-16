@@ -48,6 +48,9 @@ object AI {
     @JvmField var FARM_MIN = 0.1
     @JvmField var FARM_HI_TIER = 7       // tier index of 2K in TIER
     @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
+    @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
+    @JvmField var FARM_SURV = 0.985
+    @JvmField var FARM_K = 0.3
     @JvmField var TRAY_M = 20          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
     @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
     @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
@@ -176,7 +179,16 @@ object AI {
                 val multFut = node.mult + minOf(roundsLeft, 25.0) * 0.8
                 // high tiers: the crowding fade applies less — a 2K→3K→5K cell is worth keeping even on a busy board
                 val fsc = if (t >= FARM_HI_TIER) maxOf(farmScale, FARM_HI_SCALE) else farmScale
-                if (rem >= 3) bonusPot += fv * multFut * W_FARM * fsc * 0.3
+                if (FARM_MODEL == 1) {
+                    // OPTIMAL CASH-OUT MODEL: value = max over future round k of TIER[t + k×growRate] × (mult + 0.8k) × surv^k
+                    val g = if (nB >= 3) FARM_RATE else 0.0; var bestV = 0.0; var k = 0
+                    while (k < roundsLeft) {
+                        val ft = minOf((TIER.size - 1).toDouble(), t + k * g); val lo2 = ft.toInt().coerceIn(0, TIER.size - 1); val hi2 = minOf(TIER.size - 1, lo2 + 1)
+                        val v = (TIER[lo2] + (TIER[hi2] - TIER[lo2]) * (ft - lo2)) * (node.mult + k * 0.8) * Math.pow(FARM_SURV, k.toDouble())
+                        if (v > bestV) bestV = v; k++
+                    }
+                    if (rem >= 3) bonusPot += bestV * W_FARM * fsc * FARM_K
+                } else if (rem >= 3) bonusPot += fv * multFut * W_FARM * fsc * 0.3
             } else if (rem > 3) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
         }
         val survW = W_SURV * minOf(1.0, rem / 15.0) * (1 + node.mult * 0.15) * 4
@@ -195,60 +207,65 @@ object AI {
 
     // ---- piece library with the REAL deal distribution (96 pieces observed across two full games; big 3x3 / 5-bars never appear) ----
     private val LIB: List<Triple<String, Double, IntArray>> = listOf(
-        Triple("dot", 1.0, intArrayOf(0,0)),
-        Triple("i2", 4.0, intArrayOf(0,0, 0,1)),
-        Triple("v2", 2.5, intArrayOf(0,0, 1,0)),
-        Triple("i3", 3.0, intArrayOf(0,0, 0,1, 0,2)),
-        Triple("v3", 3.0, intArrayOf(0,0, 1,0, 2,0)),
-        Triple("i4", 3.0, intArrayOf(0,0, 0,1, 0,2, 0,3)),
-        Triple("v4", 1.5, intArrayOf(0,0, 1,0, 2,0, 3,0)),
-        Triple("i5", 0.0, intArrayOf(0,0, 0,1, 0,2, 0,3, 0,4)),
-        Triple("v5", 0.0, intArrayOf(0,0, 1,0, 2,0, 3,0, 4,0)),
-        Triple("sq2", 3.0, intArrayOf(0,0, 0,1, 1,0, 1,1)),
-        Triple("l3a", 2.0, intArrayOf(0,0, 1,0, 1,1)),
-        Triple("l3b", 2.0, intArrayOf(0,0, 0,1, 1,0)),
-        Triple("l3c", 2.0, intArrayOf(0,0, 0,1, 1,1)),
-        Triple("l3d", 1.5, intArrayOf(0,1, 1,0, 1,1)),
+        Triple("dot", 16.0, intArrayOf(0,0)),
+        Triple("i2", 18.0, intArrayOf(0,0, 0,1)),
+        Triple("v2", 20.0, intArrayOf(0,0, 1,0)),
+        Triple("i3", 12.0, intArrayOf(0,0, 0,1, 0,2)),
+        Triple("v3", 24.0, intArrayOf(0,0, 1,0, 2,0)),
+        Triple("i4", 13.0, intArrayOf(0,0, 0,1, 0,2, 0,3)),
+        Triple("v4", 16.0, intArrayOf(0,0, 1,0, 2,0, 3,0)),
+        Triple("i5", 7.0, intArrayOf(0,0, 0,1, 0,2, 0,3, 0,4)),
+        Triple("v5", 19.0, intArrayOf(0,0, 1,0, 2,0, 3,0, 4,0)),
+        Triple("sq2", 15.0, intArrayOf(0,0, 0,1, 1,0, 1,1)),
+        Triple("l3a", 10.0, intArrayOf(0,0, 1,0, 1,1)),
+        Triple("l3b", 17.0, intArrayOf(0,0, 0,1, 1,0)),
+        Triple("l3c", 9.0, intArrayOf(0,0, 0,1, 1,1)),
+        Triple("l3d", 16.0, intArrayOf(0,1, 1,0, 1,1)),
         Triple("L4a", 1.0, intArrayOf(0,0, 1,0, 2,0, 2,1)),
-        Triple("L4b", 2.0, intArrayOf(0,0, 0,1, 1,0, 2,0)),
+        Triple("L4b", 13.0, intArrayOf(0,0, 0,1, 1,0, 2,0)),
         Triple("L4c", 1.0, intArrayOf(0,0, 0,1, 0,2, 1,0)),
         Triple("L4d", 1.0, intArrayOf(0,2, 1,0, 1,1, 1,2)),
-        Triple("J4a", 5.0, intArrayOf(0,1, 1,1, 2,0, 2,1)),
-        Triple("J4b", 1.0, intArrayOf(0,0, 1,0, 1,1, 1,2)),
+        Triple("J4a", 15.0, intArrayOf(0,1, 1,1, 2,0, 2,1)),
+        Triple("J4b", 16.0, intArrayOf(0,0, 1,0, 1,1, 1,2)),
         Triple("J4c", 1.0, intArrayOf(0,0, 0,1, 1,1, 2,1)),
-        Triple("J4d", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,2)),
-        Triple("T4a", 5.0, intArrayOf(0,0, 0,1, 0,2, 1,1)),
-        Triple("T4b", 1.5, intArrayOf(0,1, 1,0, 1,1, 1,2)),
-        Triple("T4c", 1.0, intArrayOf(0,0, 1,0, 1,1, 2,0)),
-        Triple("T4d", 2.0, intArrayOf(0,1, 1,0, 1,1, 2,1)),
-        Triple("S4a", 4.0, intArrayOf(0,1, 0,2, 1,0, 1,1)),
-        Triple("S4b", 1.0, intArrayOf(0,0, 1,0, 1,1, 2,1)),
-        Triple("Z4a", 2.0, intArrayOf(0,0, 0,1, 1,1, 1,2)),
-        Triple("Z4b", 3.0, intArrayOf(0,1, 1,0, 1,1, 2,0)),
-        Triple("Lbig1", 1.0, intArrayOf(0,0, 1,0, 2,0, 2,1, 2,2)),
-        Triple("Lbig2", 2.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 2,0)),
-        Triple("Lbig3", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,2, 2,2)),
-        Triple("Lbig4", 2.0, intArrayOf(0,2, 1,2, 2,0, 2,1, 2,2)),
-        Triple("plus", 3.0, intArrayOf(0,1, 1,0, 1,1, 1,2, 2,1)),
-        Triple("U1", 4.0, intArrayOf(0,0, 0,2, 1,0, 1,1, 1,2)),
-        Triple("U2", 1.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,2)),
-        Triple("U3", 1.0, intArrayOf(0,0, 0,1, 1,0, 2,0, 2,1)),
-        Triple("U4", 1.0, intArrayOf(0,0, 0,1, 1,1, 2,0, 2,1)),
-        Triple("d2a", 1.0, intArrayOf(0,1, 1,0)),
-        Triple("d2b", 4.0, intArrayOf(0,0, 1,1)),
-        Triple("d3a", 2.0, intArrayOf(0,2, 1,1, 2,0)),
-        Triple("d3b", 2.0, intArrayOf(0,0, 1,1, 2,2)),
+        Triple("J4d", 8.0, intArrayOf(0,0, 0,1, 0,2, 1,2)),
+        Triple("T4a", 18.0, intArrayOf(0,0, 0,1, 0,2, 1,1)),
+        Triple("T4b", 15.0, intArrayOf(0,1, 1,0, 1,1, 1,2)),
+        Triple("T4c", 26.0, intArrayOf(0,0, 1,0, 1,1, 2,0)),
+        Triple("T4d", 8.0, intArrayOf(0,1, 1,0, 1,1, 2,1)),
+        Triple("S4a", 11.0, intArrayOf(0,1, 0,2, 1,0, 1,1)),
+        Triple("S4b", 14.0, intArrayOf(0,0, 1,0, 1,1, 2,1)),
+        Triple("Z4a", 15.0, intArrayOf(0,0, 0,1, 1,1, 1,2)),
+        Triple("Z4b", 14.0, intArrayOf(0,1, 1,0, 1,1, 2,0)),
+        Triple("Lbig1", 12.0, intArrayOf(0,0, 1,0, 2,0, 2,1, 2,2)),
+        Triple("Lbig2", 16.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 2,0)),
+        Triple("Lbig3", 18.0, intArrayOf(0,0, 0,1, 0,2, 1,2, 2,2)),
+        Triple("Lbig4", 27.0, intArrayOf(0,2, 1,2, 2,0, 2,1, 2,2)),
+        Triple("plus", 10.0, intArrayOf(0,1, 1,0, 1,1, 1,2, 2,1)),
+        Triple("U1", 15.0, intArrayOf(0,0, 0,2, 1,0, 1,1, 1,2)),
+        Triple("U2", 13.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,2)),
+        Triple("U3", 10.0, intArrayOf(0,0, 0,1, 1,0, 2,0, 2,1)),
+        Triple("U4", 15.0, intArrayOf(0,0, 0,1, 1,1, 2,0, 2,1)),
+        Triple("d2a", 9.0, intArrayOf(0,1, 1,0)),
+        Triple("d2b", 18.0, intArrayOf(0,0, 1,1)),
+        Triple("d3a", 10.0, intArrayOf(0,2, 1,1, 2,0)),
+        Triple("d3b", 15.0, intArrayOf(0,0, 1,1, 2,2)),
         Triple("stair", 0.0, intArrayOf(0,2, 1,1, 1,2, 2,0, 2,1)),
         Triple("rect23", 0.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2)),
         Triple("rect32", 0.0, intArrayOf(0,0, 0,1, 1,0, 1,1, 2,0, 2,1)),
         Triple("sq3", 0.0, intArrayOf(0,0, 0,1, 0,2, 1,0, 1,1, 1,2, 2,0, 2,1, 2,2)),
-        Triple("T5a", 3.0, intArrayOf(0,0, 0,1, 0,2, 1,1, 2,1)),
-        Triple("T5b", 3.0, intArrayOf(0,2, 1,0, 1,1, 1,2, 2,2)),
-        Triple("T5c", 2.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,0)),
-        Triple("T5d", 2.0, intArrayOf(0,1, 1,1, 2,0, 2,1, 2,2)),
+        Triple("T5a", 21.0, intArrayOf(0,0, 0,1, 0,2, 1,1, 2,1)),
+        Triple("T5b", 16.0, intArrayOf(0,2, 1,0, 1,1, 1,2, 2,2)),
+        Triple("T5c", 10.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,0)),
+        Triple("T5d", 15.0, intArrayOf(0,1, 1,1, 2,0, 2,1, 2,2)),
         Triple("S5a", 1.0, intArrayOf(0,1, 0,2, 1,1, 2,0, 2,1)),
-        Triple("S5b", 1.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,2)),
-        Triple("d4", 1.0, intArrayOf(0,0, 1,1, 2,2, 3,3)),
+        Triple("S5b", 4.0, intArrayOf(0,0, 1,0, 1,1, 1,2, 2,2)),
+        Triple("d4", 8.0, intArrayOf(0,0, 1,1, 2,2, 3,3)),
+        Triple("d4b", 6.0, intArrayOf(0,3, 1,2, 2,1, 3,0)),
+        Triple("d5", 3.0, intArrayOf(0,0, 1,1, 2,2, 3,3, 4,4)),
+        Triple("d5b", 1.0, intArrayOf(0,4, 1,3, 2,2, 3,1, 4,0)),
+        Triple("S5c", 2.0, intArrayOf(0,0, 0,1, 1,1, 2,1, 2,2)),
+        Triple("S5d", 1.0, intArrayOf(0,2, 1,0, 1,1, 1,2, 2,0)),
     )
     fun randomPiece(rng: java.util.Random): Piece {
         var total = 0.0; for (t in LIB) total += t.second

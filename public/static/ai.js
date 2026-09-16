@@ -25,13 +25,15 @@
               bonusKeep: 0.4, farm: 2.0, farmRate: 0.33, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
-              farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
+              farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,
+              farmModel: 0, farmSurv: 0.985, farmK: 0.3,   // 1 = optimal cash-out model (max over future rounds)   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
               rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
+              lastTrayM: 60, lastTrayLoss: 60000,   // last-round safety: sample the final tray directly
               rollCut: 6000,  // successive halving: drop candidates trailing the leader by > rollCut per future (0 = off)
               rollMScale: 2,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
-              trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
+              trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24, tray2M: 0, tray2K: 8, tray2W: 0.7,   // tray2M>0 = look TWO trays ahead   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
               endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
@@ -142,6 +144,19 @@
         const cash = rem >= 3 ? 1 : 0;                                   // must still have moves to cover it
         // high tiers: the crowding fade applies less — a 2K→3K→5K cell is worth keeping even on a busy board (farmHiScale)
         const fsc = t >= (W.farmHiTier||7) ? Math.max(farmScale, W.farmHiScale||0) : farmScale;
+        if ((W.farmModel||0) === 1) {
+          // OPTIMAL CASH-OUT MODEL: the cell will be covered at the best future round k (0..roundsLeft-1):
+          //   value(k) = TIER[t + k×growRate] × (mult + k×0.8) × survival^k  — take the max over k, minus what covering NOW pays.
+          // The difference is the true marginal value of keeping it. growRate = P(grow)/3 cells when 3 are kept (measured 0.91/3).
+          const g = nB >= 3 ? (W.farmRate||0.33) : 0; const surv = W.farmSurv || 0.985;
+          let bestV = 0;
+          for (let k = 0; k < roundsLeft; k++) {
+            const ft = Math.min(TIER.length - 1, t + k * g); const lo2 = Math.floor(ft), hi2 = Math.min(TIER.length - 1, lo2 + 1);
+            const val = (TIER[lo2] + (TIER[hi2] - TIER[lo2]) * (ft - lo2)) * (node.mult + k * 0.8) * Math.pow(surv, k);
+            if (val > bestV) bestV = val;
+          }
+          bonusPot += bestV * W.farm * fsc * cash * (W.farmK || 0.3);
+        } else
         bonusPot += fv * multFut * W.farm * fsc * cash * 0.3;
       } else {
         bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
@@ -234,6 +249,13 @@
       // more futures when fewer rounds remain (same cost): the last round's risk of an unplaceable tray must be sampled well
       const nFut = Math.max(W.rollM, Math.round(W.rollM * (W.rollRounds / Math.max(1, roundsLeft)) * (W.rollMScale||1)));
       for (let m=0;m<nFut;m++) { const f=[]; for (let k=0;k<roundsLeft;k++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; f.push(ps); } futures.push(f); }
+      // LAST ROUND SAFETY: when exactly one round remains after this one, the only thing that can still go wrong is
+      // "the final tray does not fit". Measure that directly with many trays (cheap: feasibility only) and add it to the ranking.
+      const lastRisk = new Array(top.length).fill(0);
+      if (roundsLeft === 1 && (W.lastTrayM||0) > 0) {
+        const trays = []; for (let m=0;m<W.lastTrayM;m++) trays.push(randomTray(R));
+        for (let ci=0; ci<top.length; ci++) lastRisk[ci] = trayRisk(top[ci].board, trays);
+      }
       // every candidate is evaluated on ALL futures (no time budget)
       const sums = new Array(top.length).fill(0); let used = 0;
       // SUCCESSIVE HALVING: after each third of the futures, drop the candidates that trail the leader by more than
@@ -261,7 +283,11 @@
         used++;
       }
       let bestAvg = -Infinity, bestNode = null;
-      for (const ci of alive) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
+      for (const ci of alive) if (used > 0) {
+        // expected value = rollout average − P(final tray infeasible) × (banked + this round's points + end bonus ≈ 60 cubes)
+        const avg = sums[ci] / used - lastRisk[ci] * (gameScore + top[ci].pts + (W.lastTrayLoss||60000));
+        if (avg > bestAvg) { bestAvg = avg; bestNode = top[ci]; }
+      }
       if (bestNode) best = bestNode;
     }
     // ---- NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Outside the
@@ -279,7 +305,24 @@
         const rem2 = Math.max(0, remAfterRound);
         const costs = top.map(c => (W.death||0) + gameScore + (W.deathRem||0) * rem2 + rem2 * c.mult * (W.stake||12));
         let bestV = -Infinity, bestNode = null;
-        for (let i=0;i<top.length;i++) { const risk = trayRisk(top[i].board, trays); const v = top[i].score - risk * costs[i]; top[i].trayRisk = risk; if (v > bestV) { bestV = v; bestNode = top[i]; } }
+        // TWO-ROUND RISK (tray2M > 0): the next tray may fit but leave a board where the tray AFTER it cannot — play each
+        // sampled tray with the fast planner and measure the second tray's infeasibility too (discounted by W.tray2W).
+        const risks = top.map(n => trayRisk(n.board, trays));
+        let risk2 = new Array(top.length).fill(0);
+        if ((W.tray2M||0) > 0 && roundsLeft >= 2) {
+          const trays2 = []; for (let m=0;m<W.tray2M;m++) trays2.push(randomTray(R));
+          const order = top.map((_, i) => i).sort((x, y) => (top[y].score - risks[y] * costs[y]) - (top[x].score - risks[x] * costs[x])).slice(0, W.tray2K||8);
+          for (const i of order) {
+            let bad = 0, cnt = 0;
+            for (let m=0;m<W.tray2M;m++) {
+              const pl = plan(top[i].board, top[i].bonus, trays[m % trays.length], { mult: top[i].mult, level: lvl + 1 }, { level: 1, rollout: false, deep: false });
+              if (pl.gameOver) { bad++; cnt++; continue; }
+              cnt++; if (!trayFeasible(pl.finalBoard, trays2[m])) bad++;
+            }
+            risk2[i] = cnt ? bad / cnt : 0;
+          }
+        }
+        for (let i=0;i<top.length;i++) { const risk = Math.max(risks[i], risks[i] + (1 - risks[i]) * risk2[i] * (W.tray2W||0.7)); const v = top[i].score - risk * costs[i]; top[i].trayRisk = risk; if (v > bestV) { bestV = v; bestNode = top[i]; } }
         if (bestNode) best = bestNode;
       }
     }
