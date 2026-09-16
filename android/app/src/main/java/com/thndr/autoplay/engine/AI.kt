@@ -49,6 +49,7 @@ object AI {
     @JvmField var TRAY_M = 20          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
     @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
     @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
+    @JvmField var ROLL_CUT = 12000.0   // successive halving threshold (per future) in the end-game rollouts
     @JvmField var ROLL_DEATH = 0.0     // extra penalty for a dead future inside the end-game rollouts
     @JvmField var ROLL_M_SCALE = 4.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
     @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
@@ -82,7 +83,17 @@ object AI {
 
     private class BQ(val q: Double, val rf: IntArray, val cf: IntArray, val bf: IntArray, val dead: Int, val cover: Double, val tight: Double, val empty: Int)
 
+    // MEMO: inside rollouts the same board is evaluated thousands of times → bounded, thread-safe cache keyed by occupancy
+    private val BQ_CACHE = java.util.concurrent.ConcurrentHashMap<String, BQ>()
+    private fun boardKey(board: IntArray, cfg: Cfg): String { val sb = StringBuilder(N * N + 4); for (v in board) sb.append(if (v != 0) '1' else '0'); sb.append('|').append(cfg.probes); return sb.toString() }
     private fun boardQuality(board: IntArray, cfg: Cfg): BQ {
+        val key = boardKey(board, cfg)
+        BQ_CACHE[key]?.let { return it }
+        val out = boardQuality0(board, cfg)
+        if (BQ_CACHE.size >= 60000) BQ_CACHE.clear()
+        BQ_CACHE[key] = out; return out
+    }
+    private fun boardQuality0(board: IntArray, cfg: Cfg): BQ {
         var empty = 0; var holes = 0; var trans = 0; var nearFull = 0; var edge = 0
         val rf = IntArray(N); val cf = IntArray(N); val bf = IntArray(9)
         for (r in 0 until N) for (c in 0 until N) { if (board[Engine.idx(r, c)] != 0) { rf[r]++; cf[c]++; bf[(r / 3) * 3 + c / 3]++ } else empty++ }
@@ -105,7 +116,7 @@ object AI {
         // REAL-PIECE SURVIVABILITY: weighted fraction of the pieces the game actually deals that still have a place
         var cover = 0.0; var tight = 0.0
         if (W_COVER > 0) {
-            for (lp in LIBP) { val n = Engine.countPlacements(board, lp.first); if (n > 0) cover += lp.second; if (n < 3) tight += lp.second * (3 - n) / 3.0 }
+            for (lp in LIBP) { val n = Engine.countPlacements(board, lp.first, 3); if (n > 0) cover += lp.second; if (n < 3) tight += lp.second * (3 - n) / 3.0 }
             cover /= LIBW; tight /= LIBW
         }
         var fit = 0.0; var dead = 0
@@ -363,23 +374,29 @@ object AI {
                 }
             }
             // every candidate is evaluated on ALL futures — (candidate × future) pairs run in parallel on all cores
-            val jobs = ArrayList<Pair<Int, Int>>(); for (ci in top.indices) for (fi in futures.indices) jobs.add(ci to fi)
-            val vals = parallelMap(jobs) { (ci, fi) ->
-                val cand = top[ci]; val f = futures[fi]
-                var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
-                for (k in 0 until roundsLeft) {
-                    val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
-                    if (pl == null) { dead = true; break }
-                    bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
+            // SUCCESSIVE HALVING in 3 waves: after each wave drop candidates trailing the leader by > ROLL_CUT per future
+            val sums = DoubleArray(top.size); var alive = top.indices.toList(); var used = 0
+            val waves = listOf(0 until futures.size / 3, futures.size / 3 until futures.size * 2 / 3, futures.size * 2 / 3 until futures.size).filter { !it.isEmpty() }
+            for ((wi, wave) in waves.withIndex()) {
+                if (wi > 0 && alive.size > 2 && ROLL_CUT > 0) { val lead = alive.maxOf { sums[it] }; val keep = alive.filter { lead - sums[it] <= ROLL_CUT * used }; if (keep.isNotEmpty()) alive = keep }
+                val jobs = ArrayList<Pair<Int, Int>>(); for (ci in alive) for (fi in wave) jobs.add(ci to fi)
+                val vals = parallelMap(jobs) { (ci, fi) ->
+                    val cand = top[ci]; val f = futures[fi]
+                    var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
+                    for (k in 0 until roundsLeft) {
+                        val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
+                        if (pl == null) { dead = true; break }
+                        bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
+                    }
+                    if (!dead) pts += bd.count { it != 0 } * END_CUBE else pts -= ROLL_DEATH + banked
+                    pts
                 }
-                if (!dead) pts += bd.count { it != 0 } * END_CUBE else pts -= ROLL_DEATH + banked
-                pts
+                for ((j, v) in vals.withIndex()) sums[jobs[j].first] += v
+                used += wave.count()
             }
-            val sums = DoubleArray(top.size); for ((j, v) in vals.withIndex()) sums[jobs[j].first] += v
-            val used = futures.size
             if (used > 0) {
                 var bestAvg = Double.NEGATIVE_INFINITY
-                for (ci in top.indices) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
+                for (ci in alive) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
             }
         } else if (trayActive && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
             // NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Sample real trays and

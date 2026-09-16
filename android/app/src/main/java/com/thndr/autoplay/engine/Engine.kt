@@ -53,9 +53,9 @@ object Engine {
         for (r in 0..N - p.h) for (c in 0..N - p.w) if (canPlace(board, p, r, c)) out.add(intArrayOf(r, c))
         return out
     }
-    fun countPlacements(board: IntArray, p: Piece): Int {
+    fun countPlacements(board: IntArray, p: Piece, cap: Int = Int.MAX_VALUE): Int {
         var n = 0
-        for (r in 0..N - p.h) for (c in 0..N - p.w) if (canPlace(board, p, r, c)) n++
+        for (r in 0..N - p.h) for (c in 0..N - p.w) if (canPlace(board, p, r, c)) { n++; if (n >= cap) return n }
         return n
     }
 

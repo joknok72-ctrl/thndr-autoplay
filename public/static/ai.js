@@ -25,7 +25,7 @@
               bonusKeep: 0.4, farm: 2.0, farmRate: 0.33, // uncovered bonus cells: keep them coverable
               cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
-              farmCubes0: 25, farmCubes1: 45, farmMin: 0.1,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
+              farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
               rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
@@ -140,7 +140,9 @@
         const fut = t + steps; const lo = Math.floor(fut), hi = Math.min(TIER.length-1, lo+1); const fv = TIER[lo] + (TIER[hi]-TIER[lo])*(fut-lo);
         const multFut = node.mult + Math.min(roundsLeft, 25) * 0.8;      // multiplier keeps growing ~0.8/round
         const cash = rem >= 3 ? 1 : 0;                                   // must still have moves to cover it
-        bonusPot += fv * multFut * W.farm * farmScale * cash * 0.3;
+        // high tiers: the crowding fade applies less — a 2K→3K→5K cell is worth keeping even on a busy board (farmHiScale)
+        const hi = t >= (W.farmHiTier||7) ? Math.max(farmScale, W.farmHiScale||0) : farmScale;
+        bonusPot += fv * multFut * W.farm * hi * cash * 0.3;
       } else {
         bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
       }
