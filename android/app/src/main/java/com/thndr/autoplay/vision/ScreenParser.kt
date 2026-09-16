@@ -142,7 +142,9 @@ object ScreenParser {
             if (ar[2] >= 0.55f && solid(glyphOf(best[2])) && !hollow(glyphOf(best[2]))) {
                 val a = readGlyphAmong(glyphOf(best[0]), "123456789"); val b = readGlyphAmong(glyphOf(best[1]), "0123456789")
                 val dotted = dots.any { d -> d.x0 >= best[0].x1 - 1 && d.x1 <= best[1].x0 + 1 }
-                return if (dotted) (a - '0') * 1000 + (b - '0') * 100 else ((a - '0') * 10 + (b - '0')) * 1000
+                val raw = if (dotted) (a - '0') * 1000 + (b - '0') * 100 else ((a - '0') * 10 + (b - '0')) * 1000
+                // REAL LADDER: 1.5K 2K 2.5K 3K 5K 7.5K 10K … — an undotted "NN K" like 15/25/75 can only be a missed decimal point
+                return if (!dotted && raw >= 10000 && (raw / 1000) in setOf(15, 75)) raw / 10 else raw
             }
             // 150 / 300 / 500: 2nd & 3rd glyphs are wide, last one is a hollow 0
             if (ar[1] < 0.55f || ar[1] > 0.95f || ar[2] < 0.55f || ar[2] > 0.95f || !hollow(glyphOf(best[2]))) return 50

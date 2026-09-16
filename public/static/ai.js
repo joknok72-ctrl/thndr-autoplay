@@ -29,8 +29,8 @@
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
               rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
-              rollCut: 12000,  // successive halving: drop candidates trailing the leader by > rollCut per future (0 = off)
-              rollMScale: 4,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
+              rollCut: 6000,  // successive halving: drop candidates trailing the leader by > rollCut per future (0 = off)
+              rollMScale: 2,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
               trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
@@ -141,8 +141,8 @@
         const multFut = node.mult + Math.min(roundsLeft, 25) * 0.8;      // multiplier keeps growing ~0.8/round
         const cash = rem >= 3 ? 1 : 0;                                   // must still have moves to cover it
         // high tiers: the crowding fade applies less — a 2K→3K→5K cell is worth keeping even on a busy board (farmHiScale)
-        const hi = t >= (W.farmHiTier||7) ? Math.max(farmScale, W.farmHiScale||0) : farmScale;
-        bonusPot += fv * multFut * W.farm * hi * cash * 0.3;
+        const fsc = t >= (W.farmHiTier||7) ? Math.max(farmScale, W.farmHiScale||0) : farmScale;
+        bonusPot += fv * multFut * W.farm * fsc * cash * 0.3;
       } else {
         bonusPot += node.bonus[i] * node.mult * W.bonusKeep * (rem > 3 ? 0.3 : 0);
       }

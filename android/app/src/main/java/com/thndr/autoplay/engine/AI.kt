@@ -46,12 +46,14 @@ object AI {
     @JvmField var FARM_CUBES0 = 25     // farming value starts fading at this many cubes on the board …
     @JvmField var FARM_CUBES1 = 45     // … and is down to FARM_MIN here (measured: removes the mid-game deaths)
     @JvmField var FARM_MIN = 0.1
+    @JvmField var FARM_HI_TIER = 7       // tier index of 2K in TIER
+    @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
     @JvmField var TRAY_M = 20          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
     @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
     @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
-    @JvmField var ROLL_CUT = 12000.0   // successive halving threshold (per future) in the end-game rollouts
+    @JvmField var ROLL_CUT = 6000.0   // successive halving threshold (per future) in the end-game rollouts
     @JvmField var ROLL_DEATH = 0.0     // extra penalty for a dead future inside the end-game rollouts
-    @JvmField var ROLL_M_SCALE = 4.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
+    @JvmField var ROLL_M_SCALE = 2.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
     @JvmField var TRAY_CUBES = 24      // only when the board has at least this many cubes (empty boards are always safe)
     @JvmField var DEATH = 60000.0      // cost of dying (base) …
     @JvmField var DEATH_REM = 1500.0   // … plus per remaining move (farmed bonuses + 1000/cube end bonus forfeited)
@@ -172,7 +174,9 @@ object AI {
                 val fut = t + steps; val lo = fut.toInt().coerceIn(0, TIER.size - 1); val hi = minOf(TIER.size - 1, lo + 1)
                 val fv = TIER[lo] + (TIER[hi] - TIER[lo]) * (fut - lo)
                 val multFut = node.mult + minOf(roundsLeft, 25.0) * 0.8
-                if (rem >= 3) bonusPot += fv * multFut * W_FARM * farmScale * 0.3
+                // high tiers: the crowding fade applies less — a 2K→3K→5K cell is worth keeping even on a busy board
+                val fsc = if (t >= FARM_HI_TIER) maxOf(farmScale, FARM_HI_SCALE) else farmScale
+                if (rem >= 3) bonusPot += fv * multFut * W_FARM * fsc * 0.3
             } else if (rem > 3) bonusPot += node.bonus[i] * node.mult * W_BONUS_KEEP * 0.3
         }
         val survW = W_SURV * minOf(1.0, rem / 15.0) * (1 + node.mult * 0.15) * 4
