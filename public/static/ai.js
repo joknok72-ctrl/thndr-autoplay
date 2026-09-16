@@ -26,7 +26,7 @@
               cover: 1, tight: 1.0, stake: 24, clean: 0,   // real-piece survivability (0 = off)
               riskBonus: 0, riskEnd: 0,   // extra stake: farmed bonus value / end bonus lost on death (0 = off)
               farmCubes0: 25, farmCubes1: 45, farmMin: 0.1, farmHiTier: 7, farmHiScale: 0,
-              crowdW: 1.0, crowd0: 30,   // crowding penalty (0 = off)
+              crowdW: 1.0, crowd0: 30, run5W: 1.0,   // long-piece room (I5/V5) penalty   // crowding penalty (0 = off)
               farmModel: 0, farmSurv: 0.985, farmK: 0.3,   // 1 = optimal cash-out model (max over future rounds)   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
@@ -93,6 +93,10 @@
       for (const lp of LIBP) { const n = countPlacements(board, lp.p, 3); if (n > 0) cover += lp.w; if (n < 3) tight += lp.w * (3 - n) / 3; }
       cover /= LIBW; tight /= LIBW;
     }
+    // LONG-PIECE ROOM: how many columns / rows still hold a straight run of 5 empty cells (I5 / V5 are 4% of the deals each;
+    // a tray with TWO of them needs two such runs — the only way a 28-cube board dies).
+    let run5v = 0, run5h = 0;
+    for (let k=0;k<N;k++) { let rv=0, rh=0, okv=false, okh=false; for (let j=0;j<N;j++) { rv = board[idx(j,k)] ? 0 : rv+1; if (rv>=5) okv = true; rh = board[idx(k,j)] ? 0 : rh+1; if (rh>=5) okh = true; } if (okv) run5v++; if (okh) run5h++; }
     let fit = 0, dead = 0;
     for (let k=0;k<Math.min(cfg.probes,PROBES.length);k++) { const p=PROBES[k]; const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
     let sq3 = 0;
@@ -100,7 +104,7 @@
     const seen = new Uint8Array(N*N);
     for (let i=0;i<N*N;i++) if (board[i] && !seen[i]) { let size=0; const st=[i]; seen[i]=1; while(st.length){ const j=st.pop(); size++; const r=(j/N)|0, c=j%N; if(r>0&&board[j-N]&&!seen[j-N]){seen[j-N]=1;st.push(j-N);} if(r<N-1&&board[j+N]&&!seen[j+N]){seen[j+N]=1;st.push(j+N);} if(c>0&&board[j-1]&&!seen[j-1]){seen[j-1]=1;st.push(j-1);} if(c<N-1&&board[j+1]&&!seen[j+1]){seen[j+1]=1;st.push(j+1);} } if (size<=2) islands++; }
     const q = empty * W.empty - holes * W.holes - trans * W.trans + nearFull * W.near + edgeTouch * W.edge + fit * W.fit - islands * W.isl + sq3 * W.sq3 - dead * W.dead;
-    return { q, rowFill, colFill, boxFill, dead, cover, tight, empty };
+    return { q, rowFill, colFill, boxFill, dead, cover, tight, empty, run5v, run5h };
   }
 
   /** Full evaluation of a node. ctx = { mult0, remaining } (remaining = moves left AFTER this node) */
@@ -187,7 +191,9 @@
     let endVal = 0;
     if (rem < W.endFade) { let cubes = 0; for (let i=0;i<N*N;i++) if (node.board[i]) cubes++; const w = 1 - rem / W.endFade; endVal = cubes * W.endCube * w * w; }
     const deadPen = (bq.dead > 0 && rem > 0) ? (W.deadPen||400) * (1 + node.mult*0.2) * (rem < W.endFade ? 6 : 1) : 0;
-    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd;
+    // keep at least 2 vertical and 2 horizontal 5-runs open (outside the fill phase): missing runs × P(long piece) × stake
+    const run5 = (rem >= W.endFade && (W.run5W||0) > 0) ? -((2 - Math.min(2, bq.run5v)) + (2 - Math.min(2, bq.run5h))) * W.run5W * (stake + (W.death||0) * 0.3) * 0.05 : 0;
+    return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd + run5;
   }
 
   /** Can ALL the pieces of a tray be placed (in some order, line clears included)? Exhaustive, early exit. */
