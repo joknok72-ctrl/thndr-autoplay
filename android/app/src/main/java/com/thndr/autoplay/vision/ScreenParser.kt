@@ -132,11 +132,16 @@ object ScreenParser {
         }
         // strict structural rules — an unreadable/ambiguous cell is ALWAYS 50 (never over-estimate)
         val ng = best.size
-        if (ng < 2 || ng > 3) return 50
+        if (ng < 2 || ng > 3) return 50   // (10K+ = 3 glyphs "NNK" handled below)
         val hs = best.map { it.y1 - it.y0 + 1 }; val ws = best.map { it.x1 - it.x0 + 1 }
         if (hs.max() > hs.min() * 1.2f) return 50                       // digits share one height
         val ar = FloatArray(ng) { ws[it].toFloat() / hs[it] }
         if (ng == 3) {
+            // "NNK" (10K, 12K…): last glyph is a solid K, first two are digits
+            if (ar[2] >= 0.55f && solid(glyphOf(best[2])) && !hollow(glyphOf(best[2]))) {
+                val a = readGlyphAmong(glyphOf(best[0]), "123456789"); val b = readGlyphAmong(glyphOf(best[1]), "0123456789")
+                return ((a - '0') * 10 + (b - '0')) * 1000
+            }
             // 150 / 300 / 500: 2nd & 3rd glyphs are wide, last one is a hollow 0
             if (ar[1] < 0.55f || ar[1] > 0.95f || ar[2] < 0.55f || ar[2] > 0.95f || !hollow(glyphOf(best[2]))) return 50
             val c = readGlyphAmong(glyphOf(best[0]), "135")
@@ -144,9 +149,11 @@ object ScreenParser {
             if (c != '1' && ar[0] < 0.5f) return 50
             return when (c) { '1' -> 150; '3' -> 300; else -> 500 }
         }
-        // n == 2 → "50" or "1K"/"2K": K is wide and solid, the 1/2 is narrow
-        if (ar[0] < 0.55f && ar[1] >= 0.55f && solid(glyphOf(best[1]))) {
-            return if (readGlyphAmong(glyphOf(best[0]), "12") == '1') 1000 else 2000
+        // n == 2 → "50" or "NK" (1K…9K): K is wide and solid; "50" has a hollow 0
+        if (ar[1] >= 0.55f && solid(glyphOf(best[1]))) {
+            val d = readGlyphAmong(glyphOf(best[0]), "123456789")
+            if (d == '5' && hollow(glyphOf(best[1]))) return 50
+            return (d - '0') * 1000
         }
         return 50
     }

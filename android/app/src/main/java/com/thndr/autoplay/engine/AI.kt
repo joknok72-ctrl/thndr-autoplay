@@ -43,7 +43,7 @@ object AI {
     @JvmField var W_BONUS_KEEP = 0.4   // keep uncovered bonus cells coverable (legacy, used when W_FARM = 0)
     @JvmField var W_FARM = 1.2         // bonus farming weight (measured: 77.8K → 126K–140K on the realistic sim, 0 deaths)
     @JvmField var FARM_RATE = 0.33     // expected tier steps per round while 3 cells are farmed
-    private val TIER = intArrayOf(50, 150, 300, 500, 1000, 2000)
+    private val TIER = intArrayOf(50, 150, 300, 500, 1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000)
     @JvmField var W_COVER = 1.0        // real-piece survivability: penalty ∝ P(next piece has no place) × stake
     @JvmField var W_TIGHT = 0.3
     @JvmField var STAKE = 12.0         // ≈ points per remaining move per multiplier unit
@@ -140,7 +140,7 @@ object AI {
         var nB = 0; for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) nB++
         for (i in 0 until N * N) if (node.bonus[i] != 0 && node.board[i] == 0) {
             if (W_FARM > 0) {
-                val t = maxOf(0, TIER.indexOf(node.bonus[i]))
+                var t = TIER.indexOf(node.bonus[i]); if (t < 0) { t = 0; while (t < TIER.size - 1 && TIER[t + 1] <= node.bonus[i]) t++ }
                 val roundsLeft = rem / 3.0
                 val steps = if (nB >= 3) minOf((TIER.size - 1 - t).toDouble(), roundsLeft * FARM_RATE) else 0.0
                 val fut = t + steps; val lo = fut.toInt().coerceIn(0, TIER.size - 1); val hi = minOf(TIER.size - 1, lo + 1)
@@ -231,6 +231,16 @@ object AI {
     private val LIBP: List<Pair<Piece, Double>> = LIB.filter { it.second > 0 }.map { t -> Piece((0 until t.third.size / 2).map { Cell(t.third[it * 2], t.third[it * 2 + 1], 1) }) to t.second }
     private val LIBW: Double = LIBP.sumOf { it.second }.coerceAtLeast(1.0)
 
+    /** Run [f] over [items] on a shared thread pool sized to the device's cores (falls back to sequential on any error). */
+    private val POOL: java.util.concurrent.ExecutorService by lazy { java.util.concurrent.Executors.newFixedThreadPool(maxOf(2, Runtime.getRuntime().availableProcessors())) }
+    fun <T, R> parallelMap(items: List<T>, f: (T) -> R): List<R> {
+        if (items.size <= 1) return items.map(f)
+        return try {
+            val futs = items.map { it -> POOL.submit(java.util.concurrent.Callable { f(it) }) }
+            futs.map { it.get() }
+        } catch (_: Throwable) { items.map(f) }
+    }
+
     private fun perms(a: List<Int>): List<List<Int>> = if (a.size <= 1) listOf(a) else a.flatMap { x -> perms(a - x).map { listOf(x) + it } }
 
     /**
@@ -250,7 +260,8 @@ object AI {
         val rollActive = deep && rollout && ROLL_ROUNDS > 0 && roundsLeft in 0 until ROLL_ROUNDS
         var best: Node? = null
         val cands = ArrayList<Node>()
-        for (order in perms(slots)) {
+        // MULTI-CORE: the 6 piece orderings are independent → one task per ordering on all available cores
+        val orderResults = parallelMap(perms(slots)) { order ->
             var beam = listOf(Node(board, bonus, mult0, 0, emptyList()))
             for ((step, slot) in order.withIndex()) {
                 val piece = pieces[slot]!!; val next = ArrayList<Node>()
@@ -268,8 +279,9 @@ object AI {
                            else if (deep && remaining <= END_BEAM_REM) maxOf(cfg.beam, END_BEAM) else cfg.beam
                 beam = next.take(keep)
             }
-            if (beam.isNotEmpty()) { cands.addAll(beam); if (best == null || beam[0].score > best.score) best = beam[0] }
+            beam
         }
+        for (beam in orderResults) if (beam.isNotEmpty()) { cands.addAll(beam); if (best == null || beam[0].score > best.score) best = beam[0] }
         var b = best ?: return Plan(emptyList(), 0, true, mult0)
         if (rollActive && cands.size > 1) {
             cands.sortByDescending { it.score }
@@ -285,23 +297,21 @@ object AI {
                     ps.mapIndexed { i, p -> if (i == oi) Piece(p.cells.mapIndexed { j, c -> if (j == ci) Cell(c.r, c.c, 2) else c }) else p }
                 }
             }
-            // every candidate is evaluated on ALL futures (no time budget — same as the web site)
-            val sums = DoubleArray(top.size); var used = 0
-            for (f in futures) {
-                val part = DoubleArray(top.size)
-                for ((ci, cand) in top.withIndex()) {
-                    var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
-                    for (k in 0 until roundsLeft) {
-                        val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
-                        if (pl == null) { dead = true; break }
-                        bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
-                    }
-                    if (!dead) pts += bd.count { it != 0 } * END_CUBE
-                    part[ci] = pts
+            // every candidate is evaluated on ALL futures — (candidate × future) pairs run in parallel on all cores
+            val jobs = ArrayList<Pair<Int, Int>>(); for (ci in top.indices) for (fi in futures.indices) jobs.add(ci to fi)
+            val vals = parallelMap(jobs) { (ci, fi) ->
+                val cand = top[ci]; val f = futures[fi]
+                var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
+                for (k in 0 until roundsLeft) {
+                    val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL)
+                    if (pl == null) { dead = true; break }
+                    bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
                 }
-                for (ci in top.indices) sums[ci] += part[ci]
-                used++
+                if (!dead) pts += bd.count { it != 0 } * END_CUBE
+                pts
             }
+            val sums = DoubleArray(top.size); for ((j, v) in vals.withIndex()) sums[jobs[j].first] += v
+            val used = futures.size
             if (used > 0) {
                 var bestAvg = Double.NEGATIVE_INFINITY
                 for (ci in top.indices) if (sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; b = top[ci] }
