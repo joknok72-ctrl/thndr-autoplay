@@ -29,6 +29,7 @@
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
               rollDeath: 0,    // penalty for a dead future inside the end-game rollouts
+              rollCut: 12000,  // successive halving: drop candidates trailing the leader by > rollCut per future (0 = off)
               rollMScale: 4,   // futures in the last rounds = rollM × rollRounds/roundsLeft × rollMScale
               trayM: 20, trayK: 48, trayKOpen: 24, trayCubes: 24,   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
@@ -45,7 +46,23 @@
     return { points: (res.cells.length + 20 * res.lines + res.bonusHit) * nm, mult: nm, lines: res.lines };
   }
 
+  // MEMO: inside rollouts the same board is evaluated thousands of times → cache by board key (bounded)
+  const BQ_CACHE = new Map(); const BQ_MAX = 60000;
+  function boardKey(board) { let k = ''; for (let i=0;i<N*N;i+=1) k += board[i] ? '1' : '0'; return k; }
+  /** number of legal placements of p on board, stopping at `cap` (much cheaper than allPlacements().length) */
+  function countPlacements(board, p, cap) {
+    let n = 0; const h = p.h || (Math.max(...p.cells.map(c=>c.r))+1), w = p.w || (Math.max(...p.cells.map(c=>c.c))+1);
+    for (let r=0;r<=N-h;r++) for (let c=0;c<=N-w;c++) { let ok = true; for (const cl of p.cells) if (board[(r+cl.r)*N + c+cl.c]) { ok = false; break; } if (ok && ++n >= cap) return n; }
+    return n;
+  }
   function boardQuality(board, cfg) {
+    const key = boardKey(board) + '|' + cfg.probes + '|' + (cfg.lite ? 'L' : 'F');
+    const hit = BQ_CACHE.get(key); if (hit) return hit;
+    const out = boardQuality0(board, cfg);
+    if (BQ_CACHE.size >= BQ_MAX) BQ_CACHE.clear();
+    BQ_CACHE.set(key, out); return out;
+  }
+  function boardQuality0(board, cfg) {
     let empty = 0, holes = 0, trans = 0, nearFull = 0, edgeTouch = 0, islands = 0;
     const rowFill = new Array(N).fill(0), colFill = new Array(N).fill(0);
     for (let r=0;r<N;r++) for (let c=0;c<N;c++) { if (board[idx(r,c)]) { rowFill[r]++; colFill[c]++; } else empty++; }
@@ -69,7 +86,7 @@
     // REAL-PIECE SURVIVABILITY: what fraction (weighted by real deal frequency) of the pieces the game can deal still fits?
     let cover = 0, tight = 0;
     if (W.cover > 0) {
-      for (const lp of LIBP) { const n = E.allPlacements(board, lp.p).length; if (n > 0) cover += lp.w; if (n < 3) tight += lp.w * (3 - n) / 3; }
+      for (const lp of LIBP) { const n = countPlacements(board, lp.p, 3); if (n > 0) cover += lp.w; if (n < 3) tight += lp.w * (3 - n) / 3; }
       cover /= LIBW; tight /= LIBW;
     }
     let fit = 0, dead = 0;
@@ -217,9 +234,16 @@
       for (let m=0;m<nFut;m++) { const f=[]; for (let k=0;k<roundsLeft;k++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; f.push(ps); } futures.push(f); }
       // every candidate is evaluated on ALL futures (no time budget)
       const sums = new Array(top.length).fill(0); let used = 0;
+      // SUCCESSIVE HALVING: after each third of the futures, drop the candidates that trail the leader by more than
+      // `W.rollCut` per future (they cannot catch up) — the survivors get the full future set, the losers stop early.
+      let alive = top.map((_, i) => i); const cutAt = [Math.ceil(futures.length / 3), Math.ceil(futures.length * 2 / 3)];
       for (let m=0;m<futures.length;m++) {
+        if (cutAt.includes(m) && alive.length > 2 && (W.rollCut||0) > 0) {
+          let lead = -Infinity; for (const ci of alive) lead = Math.max(lead, sums[ci]);
+          const keep = alive.filter(ci => lead - sums[ci] <= W.rollCut * m); if (keep.length >= 1) alive = keep;
+        }
         const f = futures[m]; const part = new Array(top.length).fill(0);
-        for (let ci=0; ci<top.length; ci++) {
+        for (const ci of alive) {
           const cand = top[ci];
           let b = cand.board, bo = cand.bonus, mu = cand.mult, pts = cand.pts, dead = false;
           for (let k=0;k<roundsLeft && !dead;k++) {
@@ -231,11 +255,11 @@
           else pts -= (W.rollDeath||0) + gameScore;   // dying in the last rounds forfeits the end bonus AND the game — extra explicit penalty
           part[ci] = pts;
         }
-        for (let ci=0; ci<top.length; ci++) sums[ci] += part[ci];
+        for (const ci of alive) sums[ci] += part[ci];
         used++;
       }
       let bestAvg = -Infinity, bestNode = null;
-      for (let ci=0; ci<top.length; ci++) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
+      for (const ci of alive) if (used > 0 && sums[ci] / used > bestAvg) { bestAvg = sums[ci] / used; bestNode = top[ci]; }
       if (bestNode) best = bestNode;
     }
     // ---- NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Outside the
