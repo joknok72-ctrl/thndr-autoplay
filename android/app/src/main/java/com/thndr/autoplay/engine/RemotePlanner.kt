@@ -9,7 +9,8 @@ import java.net.URL
 /** Sends the board to the plan server (same engine.js/ai.js as the website, running on a real CPU) and returns the plan.
  *  Throws on any network/server failure — the caller falls back to the on-device planner. */
 object RemotePlanner {
-    const val DEFAULT_URL = "https://thndr-plan.fly.dev"
+    const val DEFAULT_URL = "https://thndr-plan-production-b4cb.up.railway.app"          // Railway: always-on, fastest measured
+    const val BACKUP_URL = "https://thndr-plan.fly.dev"                                // Fly: backup (trial account → 5-min recycling)
     /** Same server behind the game's Cloudflare domain — used automatically when fly.dev is unreachable on the phone's network. */
     const val PROXY_URL = "https://thndr-ai-block.pages.dev"
     var lastMs = 0L
@@ -20,11 +21,11 @@ object RemotePlanner {
     /** Try the configured URL, then the Cloudflare proxy. */
     fun planAny(baseUrl: String, board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int,
                 level: Int, deep: Boolean, gameScore: Int, fillMoves: Int): Plan {
-        val urls = if (baseUrl.trimEnd('/') == PROXY_URL) listOf(PROXY_URL) else listOf(baseUrl, PROXY_URL)
+        val urls = (listOf(baseUrl.trimEnd('/'), BACKUP_URL, PROXY_URL)).distinct()
         var last: Exception? = null
         // The server machine can be recycled mid-request (trial hosting) → it answers 503 {retry} or drops the connection.
         // Retry the same URL a few times (fresh machine in ~2 s) before moving to the Cloudflare route, and only then give up.
-        for (u in urls) for (attempt in 0 until 3) {
+        for (u in urls) for (attempt in 0 until 2) {
             try { val p = plan(u, board, bonus, pieces, mult, gameLevel, level, deep, gameScore, fillMoves); lastUrl = u; return p }
             catch (e: Exception) { last = e; onRetry?.invoke(u, attempt + 1, e.message ?: "?"); Thread.sleep(2500) }
         }
@@ -66,8 +67,8 @@ object RemotePlanner {
 
     /** Quick reachability probe (GET /health) — returns server CPU count or -1. */
     fun pingAny(baseUrl: String): Pair<Int, String> {
-        val a = ping(baseUrl); if (a > 0) return a to baseUrl
-        val b = ping(PROXY_URL); return b to PROXY_URL
+        for (u in listOf(baseUrl.trimEnd('/'), BACKUP_URL, PROXY_URL).distinct()) { val n = ping(u); if (n > 0) return n to u }
+        return -1 to ""
     }
     fun ping(baseUrl: String): Int = try {
         val conn = URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection

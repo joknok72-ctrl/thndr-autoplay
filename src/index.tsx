@@ -12,17 +12,20 @@ app.get('/sw.js', serveStatic({ path: './public/sw.js' }))
 app.get('/api/health', (c) => c.json({ ok: true, game: 'THNDR AI Block', levels: 25 }))
 
 // Plan-server proxy: some mobile networks cannot reach fly.dev directly, so the app can call the game domain instead
-const PLAN_SERVER = 'https://thndr-plan.fly.dev'
+const PLAN_SERVERS = ['https://thndr-plan-production-b4cb.up.railway.app', 'https://thndr-plan.fly.dev']   // primary (Railway, always-on) then backup (Fly)
 app.get('/health', async (c) => {
-  try { const r = await fetch(PLAN_SERVER + '/health', { signal: AbortSignal.timeout(20000) }); return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }) }
-  catch (e) { return c.json({ ok: false, error: String(e) }, 502) }
+  for (const base of PLAN_SERVERS) {
+    try { const r = await fetch(base + '/health', { signal: AbortSignal.timeout(12000) }); if (r.ok) { const j: any = await r.json(); j.via = base; return c.json(j) } } catch (_) {}
+  }
+  return c.json({ ok: false, error: 'no plan server reachable' }, 502)
 })
 app.post('/api/plan', async (c) => {
   const body = await c.req.text(); let lastErr = ''
   // the plan machine may be recycled mid-request (trial account) → retry a few times before giving up
   for (let attempt = 0; attempt < 4; attempt++) {
+    const base = PLAN_SERVERS[Math.min(attempt >> 1, PLAN_SERVERS.length - 1)]   // 2 tries on Railway, then 2 on Fly
     try {
-      const r = await fetch(PLAN_SERVER + '/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(280000) })
+      const r = await fetch(base + '/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(280000) })
       if (r.status === 503 || r.status === 502) { lastErr = 'HTTP ' + r.status; await new Promise(res => setTimeout(res, 2500)); continue }
       return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
     } catch (e) { lastErr = String(e); await new Promise(res => setTimeout(res, 2500)) }

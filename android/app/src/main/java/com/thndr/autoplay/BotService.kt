@@ -247,7 +247,7 @@ class BotService : Service() {
                     var planOpt: com.thndr.autoplay.engine.Plan? = null
                     if (useServer) {
                         guide?.setMessage("☁ السيرفر بيحسب الخطة ($lvlName)… ثواني لمستوى 3، حتى دقيقة لـULTRA")
-                        RemotePlanner.onRetry = { u, n, err -> guide?.setMessage("☁ السيرفر بيعيد التشغيل — محاولة $n ${if (u == RemotePlanner.PROXY_URL) "عبر Cloudflare" else ""} ($lvlName)… ${err.take(30)}") }
+                        RemotePlanner.onRetry = { u, n, err -> guide?.setMessage("☁ محاولة $n على ${when (u) { RemotePlanner.PROXY_URL -> "Cloudflare"; RemotePlanner.BACKUP_URL -> "Fly"; else -> "Railway" }} ($lvlName)… ${err.take(30)}") }
                         planOpt = try { RemotePlanner.planAny(serverUrl, ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, bankedScore, AI.END_FADE) }
                                catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); guide?.flash("السيرفر مش متاح بعد كل المحاولات (${e.message?.take(40)}) — بحسب على الموبايل", 4000); null }
                     }
@@ -258,7 +258,7 @@ class BotService : Service() {
                                catch (_: OutOfMemoryError) { System.gc(); guide?.flash("الرام مش كافية لـULTRA — الجولة دي بمستوى الأقصى", 2500); AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, 3, deep, true, bankedScore) }
                     }
                     val plan: com.thndr.autoplay.engine.Plan = planOpt!!
-                    val planSrc = if (useServer && RemotePlanner.lastMs > 0 && plan.moves.isNotEmpty()) "☁ ${RemotePlanner.lastMs / 1000}ث${if (RemotePlanner.lastUrl == RemotePlanner.PROXY_URL) " عبر Cloudflare" else ""}" else "${lastThreads}/${AI.CORES} كور"
+                    val planSrc = if (useServer && RemotePlanner.lastMs > 0 && plan.moves.isNotEmpty()) "☁ ${RemotePlanner.lastMs / 1000}ث ${when (RemotePlanner.lastUrl) { RemotePlanner.PROXY_URL -> "Cloudflare"; RemotePlanner.BACKUP_URL -> "Fly"; else -> "Railway" }}" else "${lastThreads}/${AI.CORES} كور"
                     RemotePlanner.lastMs = 0
                     if (plan.gameOver || plan.moves.isEmpty()) {
                         runCatching { GameLog.record(this, ps, confirmed, plan, pendingBitmap, "GAME_OVER: no placement for any order") }; pendingBitmap = null

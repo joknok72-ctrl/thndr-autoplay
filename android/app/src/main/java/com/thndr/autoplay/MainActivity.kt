@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
         val chkServer = findViewById<CheckBox>(R.id.chkServer); val edtServer = findViewById<EditText>(R.id.edtServer); val lblServer = findViewById<TextView>(R.id.lblServer)
         chkServer.isChecked = prefs.getBoolean("server", true)
         chkServer.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("server", v).apply(); if (v) pingServer(lblServer) }
+        // migrate: older versions stored the Fly URL as the default → move to the Railway primary (Fly stays as automatic backup)
+        if (prefs.getString("serverUrl", null)?.trimEnd('/') == RemotePlanner.BACKUP_URL) prefs.edit().putString("serverUrl", RemotePlanner.DEFAULT_URL).apply()
         edtServer.setText(prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL))
         edtServer.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(e: android.text.Editable?) { val u = e?.toString()?.trim().orEmpty(); prefs.edit().putString("serverUrl", if (u.isEmpty()) RemotePlanner.DEFAULT_URL else u).apply() }
@@ -116,7 +118,8 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val url = prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL
             val (cpus, via) = RemotePlanner.pingAny(url)
-            ui.post { lbl.text = if (cpus > 0) "✔ السيرفر شغال ($cpus كور)${if (via == RemotePlanner.PROXY_URL && url.trimEnd('/') != via) " — عبر Cloudflare" else ""} — الخطة هتتحسب هناك" else "✖ السيرفر مش متاح (لا fly.dev ولا Cloudflare) — هيحسب على الموبايل تلقائيًا" }
+            val name = when (via) { RemotePlanner.PROXY_URL -> "عبر Cloudflare"; RemotePlanner.BACKUP_URL -> "Fly احتياطي"; else -> "Railway" }
+            ui.post { lbl.text = if (cpus > 0) "✔ السيرفر شغال ($name) — الخطة هتتحسب هناك" else "✖ ولا سيرفر متاح (Railway / Fly / Cloudflare) — هيحسب على الموبايل تلقائيًا" }
         }.start()
     }
 }

@@ -1,6 +1,7 @@
 // Loads the exact same engine.js + ai.js used by the website and exposes plan() natively (no vm — ~25x faster).
 const fs = require('fs'), path = require('path');
-const STATIC = path.join(__dirname, '..', 'public', 'static');
+// engine files: prefer the website copy (../public/static, always current in the repo); fall back to the bundled server/static copy
+const STATIC = fs.existsSync(path.join(__dirname, '..', 'public', 'static', 'ai.js')) ? path.join(__dirname, '..', 'public', 'static') : path.join(__dirname, 'static');
 const g = { console };
 g.self = g; g.window = g; g.global = g;
 for (const f of ['engine.js', 'ai.js']) {
