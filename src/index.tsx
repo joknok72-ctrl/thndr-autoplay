@@ -141,7 +141,7 @@ app.get('/', (c) => {
     <header class="sheet-head"><h2>الإعدادات</h2><button class="close" data-close><i class="fa-solid fa-xmark"></i></button></header>
     <div class="settings">
       <div class="set-row"><label>قوة الذكاء الاصطناعي</label>
-        <div class="seg" data-set="aiLevel"><button data-v="1">سريع</button><button data-v="2">قوي</button><button data-v="3">أقصى</button></div></div>
+        <div class="seg" data-set="aiLevel"><button data-v="1">سريع</button><button data-v="2">قوي</button><button data-v="3">أقصى</button><button data-v="4" title="بحث شامل بلا قص + أعمق نظرة أمامية — بطيء جدًا">ULTRA</button></div></div>
       <div class="set-row"><label>ملء اللوحة في النهاية (كل مكعب باقي = 1000)</label>
         <div class="seg" data-set="fillLevels"><button data-v="2">آخر لفلين</button><button data-v="3">آخر 3</button><button data-v="4">آخر 4</button><button data-v="5">آخر 5</button></div></div>
       <div class="set-row"><label>أسلوب «اللوحة الفاضية» (امسح كتير قبل الملء)</label>

@@ -94,7 +94,8 @@ object AI {
     @JvmField var ROLL_LEVEL = 1       // planner level used inside rollouts (fast)
 
     data class Cfg(val beam: Int, val probes: Int)
-    val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 12))
+    // level 4 = ULTRA: EXHAUSTIVE — no beam pruning (every complete 3-piece plan is evaluated) + every lookahead knob at its ceiling
+    val LEVELS = mapOf(1 to Cfg(6, 6), 2 to Cfg(14, 9), 3 to Cfg(32, 12), 4 to Cfg(1000000, 12))
 
     /** Real THNDR scoring. */
     fun realPoints(res: PlaceResult, mult: Int): Pair<Int, Int> {
@@ -373,8 +374,20 @@ object AI {
      * @param rollout end-game rollouts (last ROLL_ROUNDS rounds): re-rank the best candidates by simulating the
      *                remaining rounds with random pieces — same futures for every candidate.
      */
+    /** ULTRA profile (level 4): applied for the duration of one top-level plan() call, restored afterwards. */
+    private val ULTRA_LOCK = Any()
     fun plan(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int = 3, deep: Boolean = true, rollout: Boolean = true, gameScore: Int = 0): Plan {
-        val cfg = LEVELS[level.coerceIn(1, 3)]!!
+        if (level >= 4) synchronized(ULTRA_LOCK) {
+            val sv = doubleArrayOf(END_BEAM.toDouble(), ROLL_K.toDouble(), ROLL_K_FILL.toDouble(), ROLL_K_PTS.toDouble(), ROLL_K_OPEN.toDouble(), ROLL_M.toDouble(), ROLL_M_SCALE, ROLL_CUT, ROLL_ALL.toDouble(), ROLL_HORIZON.toDouble(), TRAY_M.toDouble(), TRAY_K.toDouble(), TRAY_K_OPEN.toDouble(), TRAY2_M.toDouble(), TRAY2_K.toDouble(), LAST_TRAY_M.toDouble(), INNER_SAFE_K.toDouble(), INNER_SAFE_M.toDouble())
+            END_BEAM = 1000000; ROLL_K = 8; ROLL_K_FILL = 6; ROLL_K_PTS = 4; ROLL_K_OPEN = 8; ROLL_M = 8; ROLL_M_SCALE = 3.0; ROLL_CUT = 0.0; ROLL_ALL = 8; ROLL_HORIZON = 3
+            TRAY_M = 60; TRAY_K = 64; TRAY_K_OPEN = 32; TRAY2_M = 16; TRAY2_K = 12; LAST_TRAY_M = 120; INNER_SAFE_K = 8; INNER_SAFE_M = 8
+            try { return planCore(board, bonus, pieces, mult, gameLevel, 4, deep, rollout, gameScore) }
+            finally { END_BEAM = sv[0].toInt(); ROLL_K = sv[1].toInt(); ROLL_K_FILL = sv[2].toInt(); ROLL_K_PTS = sv[3].toInt(); ROLL_K_OPEN = sv[4].toInt(); ROLL_M = sv[5].toInt(); ROLL_M_SCALE = sv[6]; ROLL_CUT = sv[7]; ROLL_ALL = sv[8].toInt(); ROLL_HORIZON = sv[9].toInt(); TRAY_M = sv[10].toInt(); TRAY_K = sv[11].toInt(); TRAY_K_OPEN = sv[12].toInt(); TRAY2_M = sv[13].toInt(); TRAY2_K = sv[14].toInt(); LAST_TRAY_M = sv[15].toInt(); INNER_SAFE_K = sv[16].toInt(); INNER_SAFE_M = sv[17].toInt() }
+        }
+        return planCore(board, bonus, pieces, mult, gameLevel, level, deep, rollout, gameScore)
+    }
+    private fun planCore(board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int, level: Int, deep: Boolean, rollout: Boolean, gameScore: Int): Plan {
+        val cfg = LEVELS[level.coerceIn(1, 4)]!!
         val slots = pieces.indices.filter { pieces[it] != null }
         if (slots.isEmpty()) return Plan(emptyList(), 0, false, mult)
         val mult0 = maxOf(1, mult); val lvl = gameLevel.coerceIn(1, 25)

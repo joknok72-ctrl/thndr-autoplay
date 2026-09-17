@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         seekFill.setOnSeekBarChangeListener(simple { prefs.edit().putInt("fillMoves", (it + 2) * 3).apply(); lblFill.text = fillName(it) })
 
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
-        seekLevel.max = 2; seekLevel.progress = prefs.getInt("level", 3).coerceIn(1, 3) - 1
+        seekLevel.max = 3; seekLevel.progress = prefs.getInt("level", 3).coerceIn(1, 4) - 1
         lblLevel.text = levelName(seekLevel.progress + 1)
         seekLevel.setOnSeekBarChangeListener(simple { prefs.edit().putInt("level", it + 1).apply(); lblLevel.text = levelName(it + 1) })
 
@@ -75,7 +75,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun fillName(i: Int) = "ملء اللوحة في آخر ${i + 2} لفلات" + (if (i == 1) " (موصى به)" else "")
-    private fun levelName(l: Int) = when (l) { 1 -> "سريع"; 2 -> "قوي"; else -> "الأقصى — أعلى نقاط في الـ 25 لفل (موصى به)" }
+    private fun levelName(l: Int) = when (l) { 1 -> "سريع"; 2 -> "قوي"; 3 -> "الأقصى — أعلى نقاط في الـ 25 لفل (موصى به)"; else -> "ULTRA — بحث شامل بلا قص + أعمق نظرة أمامية (30–90 ث للجولة؛ لا يوجد أعمق منه)" }
     private fun simple(f: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) { f(p) }
         override fun onStartTrackingTouch(s: SeekBar?) {}; override fun onStopTrackingTouch(s: SeekBar?) {}

@@ -18,7 +18,9 @@
   const LIBP = E.LIB_ORDER.filter(k => (E.REAL_W||{})[k] > 0).map(k => ({ p: E.makePiece(k), w: E.REAL_W[k] }));
   const LIBW = LIBP.reduce((a,b)=>a+b.w,0) || 1;
   // level 3 = MAX: wide beam (a 3-piece round has ≤ ~2000 complete plans, so 96 keeps almost every distinct line alive)
-  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
+  // level 4 = ULTRA: EXHAUSTIVE — no beam pruning at all (every complete 3-piece plan is generated and evaluated),
+  // plus every lookahead knob at its ceiling (see ULTRA below). Nothing deeper exists in this planner.
+  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 }, 4: { beam: 1000000, probes: 12, ultra: true } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
@@ -226,6 +228,15 @@
   /** plan(board, bonus, pieces[3], state{mult, level}, opts{level}) */
   function plan(board, bonus, pieces, state, opts) {
     opts = opts || {}; const cfg = LEVELS[opts.level||3] || LEVELS[3];
+    // ULTRA profile: every search knob at its ceiling for the duration of this call (restored on exit)
+    // (exhaustive plan generation everywhere + wider/longer lookahead; futures kept at a count a 4-core phone finishes in ~30–60 s/level)
+    const ULTRA = { endBeam: 1000000, rollK: 8, rollKFill: 6, rollKPts: 4, rollKOpen: 8, rollM: 8, rollMScale: 3, rollCut: 0,
+                    rollAll: 8, rollHorizon: 3, trayM: 60, trayK: 64, trayKOpen: 32, tray2M: 16, tray2K: 12, lastTrayM: 120, innerSafeK: 8, innerSafeM: 8 };
+    let savedW = null;
+    if (cfg.ultra && !opts._inner) { savedW = {}; for (const k in ULTRA) { savedW[k] = W[k]; W[k] = ULTRA[k]; } }
+    try { return planCore(board, bonus, pieces, state, opts, cfg); } finally { if (savedW) for (const k in savedW) W[k] = savedW[k]; }
+  }
+  function planCore(board, bonus, pieces, state, opts, cfg) {
     // strategy knobs (per call): fill horizon (moves) and clean-board style
     if (opts.fillMoves) W.endFade = Math.max(3, Math.min(15, +opts.fillMoves));
     if (opts.clean !== undefined) W.clean = opts.clean ? 1 : 0;
@@ -320,7 +331,7 @@
             bo = growBonus(b, bo, coveredRound, R);
             // inner rounds: the fast planner; on the second-to-last round it must ALSO avoid boards the final tray cannot fit
             const isPenult = (lvl + 1 + k) === 24 && (W.innerSafeK||0) > 0 && k + 1 < f.length;
-            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false, deep: false, safeLast: isPenult ? f[k + 1] : null });
+            const pl = plan(b, bo, f[k], { mult: mu, level: lvl + 1 + k }, { level: W.rollLevel, rollout: false, deep: false, _inner: true, safeLast: isPenult ? f[k + 1] : null });
             if (pl.gameOver) { dead = true; break; }
             coveredRound = 0; for (let i=0;i<N*N;i++) if (bo[i] && !b[i] && pl.finalBoard[i]) coveredRound++;
             b = pl.finalBoard; bo = pl.finalBonus; mu = pl.finalMult; pts += pl.total;
@@ -369,7 +380,7 @@
           for (const i of order) {
             let bad = 0, cnt = 0;
             for (let m=0;m<W.tray2M;m++) {
-              const pl = plan(top[i].board, top[i].bonus, trays[m % trays.length], { mult: top[i].mult, level: lvl + 1 }, { level: 1, rollout: false, deep: false });
+              const pl = plan(top[i].board, top[i].bonus, trays[m % trays.length], { mult: top[i].mult, level: lvl + 1 }, { level: 1, rollout: false, deep: false, _inner: true });
               if (pl.gameOver) { bad++; cnt++; continue; }
               cnt++; if (!trayFeasible(pl.finalBoard, trays2[m])) bad++;
             }
@@ -405,7 +416,7 @@
       const sums = top.map(cand => {
         let sum = 0;
         for (const f of futures) {
-          const pl = plan(cand.board, cand.bonus, f, { mult: cand.mult, level: lvl + 1 }, { level: W.midRollLevel||1, rollout: false, deep: false });
+          const pl = plan(cand.board, cand.bonus, f, { mult: cand.mult, level: lvl + 1 }, { level: W.midRollLevel||1, rollout: false, deep: false, _inner: true });
           // A dead future forfeits EVERYTHING still to come (banked points, farmed bonus cells, 1000/cube end bonus)
           if (pl.gameOver) { sum += cand.pts - deathCost(cand); continue; }
           const nn = { board: pl.finalBoard, bonus: pl.finalBonus, mult: pl.finalMult, pts: cand.pts + pl.total };
