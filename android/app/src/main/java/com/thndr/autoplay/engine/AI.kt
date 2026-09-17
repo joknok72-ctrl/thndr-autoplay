@@ -143,7 +143,7 @@ object AI {
         }
         var fit = 0.0; var dead = 0
         for (k in 0 until minOf(cfg.probes, PROBES.size)) {
-            val (p, w) = PROBES[k]; val n = Engine.countPlacements(board, p)
+            val (p, w) = PROBES[k]; val n = Engine.countPlacements(board, p, 12)
             fit += minOf(n, 12) * w / 12.0
             if (n == 0) { fit -= w * 2; dead++ }
         }

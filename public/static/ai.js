@@ -60,7 +60,9 @@
   /** number of legal placements of p on board, stopping at `cap` (much cheaper than allPlacements().length) */
   function countPlacements(board, p, cap) {
     let n = 0; const h = p.h || (Math.max(...p.cells.map(c=>c.r))+1), w = p.w || (Math.max(...p.cells.map(c=>c.c))+1);
-    for (let r=0;r<=N-h;r++) for (let c=0;c<=N-w;c++) { let ok = true; for (const cl of p.cells) if (board[(r+cl.r)*N + c+cl.c]) { ok = false; break; } if (ok && ++n >= cap) return n; }
+    let off = p._off; if (!off) { off = p._off = new Int32Array(p.cells.length); for (let k=0;k<p.cells.length;k++) off[k] = p.cells[k].r*N + p.cells[k].c; }
+    const L = off.length;
+    for (let r=0;r<=N-h;r++) { const base = r*N; for (let c=0;c<=N-w;c++) { let ok = true; const b = base + c; for (let k=0;k<L;k++) if (board[b+off[k]]) { ok = false; break; } if (ok && ++n >= cap) return n; } }
     return n;
   }
   function boardQuality(board, cfg) {
@@ -102,7 +104,7 @@
     let run5v = 0, run5h = 0;
     for (let k=0;k<N;k++) { let rv=0, rh=0, okv=false, okh=false; for (let j=0;j<N;j++) { rv = board[idx(j,k)] ? 0 : rv+1; if (rv>=5) okv = true; rh = board[idx(k,j)] ? 0 : rh+1; if (rh>=5) okh = true; } if (okv) run5v++; if (okh) run5h++; }
     let fit = 0, dead = 0;
-    for (let k=0;k<Math.min(cfg.probes,PROBES.length);k++) { const p=PROBES[k]; const n = E.allPlacements(board, p).length; fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
+    for (let k=0;k<Math.min(cfg.probes,PROBES.length);k++) { const p=PROBES[k]; const n = countPlacements(board, p, 12); /* same as allPlacements().length clamped at 12, no allocation */ fit += Math.min(n, 12) * (PROBE_W[p.key]||1) / 12; if (n===0) { fit -= (PROBE_W[p.key]||1) * 2; dead++; } }
     let sq3 = 0;
     for (let r=0;r<=6;r++) for (let c=0;c<=6;c++) { let ok=true; for (let a=0;a<3&&ok;a++) for (let b=0;b<3;b++) if (board[idx(r+a,c+b)]) { ok=false; break; } if (ok) sq3++; }
     const seen = new Uint8Array(N*N);

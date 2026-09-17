@@ -10,6 +10,9 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import com.thndr.autoplay.engine.RemotePlanner
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -56,6 +59,16 @@ class MainActivity : AppCompatActivity() {
         lblFill.text = fillName(seekFill.progress)
         seekFill.setOnSeekBarChangeListener(simple { prefs.edit().putInt("fillMoves", (it + 2) * 3).apply(); lblFill.text = fillName(it) })
 
+        val chkServer = findViewById<CheckBox>(R.id.chkServer); val edtServer = findViewById<EditText>(R.id.edtServer); val lblServer = findViewById<TextView>(R.id.lblServer)
+        chkServer.isChecked = prefs.getBoolean("server", true)
+        chkServer.setOnCheckedChangeListener { _, v -> prefs.edit().putBoolean("server", v).apply(); if (v) pingServer(lblServer) }
+        edtServer.setText(prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL))
+        edtServer.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(e: android.text.Editable?) { val u = e?.toString()?.trim().orEmpty(); prefs.edit().putString("serverUrl", if (u.isEmpty()) RemotePlanner.DEFAULT_URL else u).apply() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        if (chkServer.isChecked) pingServer(lblServer)
         val seekLevel = findViewById<SeekBar>(R.id.seekLevel); val lblLevel = findViewById<TextView>(R.id.lblLevel)
         seekLevel.max = 3; seekLevel.progress = prefs.getInt("level", 3).coerceIn(1, 4) - 1
         lblLevel.text = levelName(seekLevel.progress + 1)
@@ -97,4 +110,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+
+    private fun pingServer(lbl: TextView) {
+        lbl.text = "بفحص السيرفر…"
+        Thread {
+            val url = prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL
+            val cpus = RemotePlanner.ping(url)
+            ui.post { lbl.text = if (cpus > 0) "✔ السيرفر شغال ($cpus كور) — الخطة هتتحسب هناك" else "✖ السيرفر مش متاح — هيحسب على الموبايل تلقائيًا" }
+        }.start()
+    }
 }

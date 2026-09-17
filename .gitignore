@@ -34,3 +34,5 @@ lerna-debug.log*
 .wrangler/
 .dev.vars
 dist/
+.fly.env
+.dev.vars
