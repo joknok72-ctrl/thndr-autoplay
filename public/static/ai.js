@@ -31,7 +31,7 @@
               farmModel: 0, farmSurv: 0.985, farmK: 0.3,   // 1 = optimal cash-out model (max over future rounds)   // farming fades out between farmCubes0..farmCubes1 cubes (0 = off)
               dangerCubes: 99, dangerCover: 0, dangerM: 4, dangerK: 6,   // danger-triggered 1-round lookahead (off by default)
               death: 60000, deathRem: 1500,   // cost of dying inside a lookahead future (base + per remaining move)
-              rollAll: 0, rollHorizon: 2,   // MAX: rollouts at every level (futures count) with this horizon in rounds (0 = end-game only)
+              rollAll: 6, rollHorizon: 2,   // MAX: rollouts at every level (futures count) with this horizon in rounds (0 = end-game only)
               rollDeath: 50000,    // penalty for a dead future inside the end-game rollouts
               lastTrayM: 60, lastTrayLoss: 60000,   // last-round safety: sample the final tray directly
               innerSafeK: 6, innerSafeM: 6,   // inner rollout planner: on the 2nd-to-last round keep K candidates and pick the one the final tray fits
