@@ -244,18 +244,19 @@ class BotService : Service() {
                     val serverUrl = prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL
                     val lvlName = if (lvlPref >= 4) "ULTRA" else "مستوى $lvlPref"
                     // 1) SERVER mode: the plan is computed on a real CPU (same ai.js as the website) and the phone only shows the moves.
-                    var plan: com.thndr.autoplay.engine.Plan? = null
+                    var planOpt: com.thndr.autoplay.engine.Plan? = null
                     if (useServer) {
                         guide?.setMessage("☁ السيرفر بيحسب الخطة ($lvlName)… ثواني لمستوى 3، حتى دقيقتين لـULTRA")
-                        plan = try { RemotePlanner.plan(serverUrl, ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, bankedScore, AI.END_FADE) }
+                        planOpt = try { RemotePlanner.plan(serverUrl, ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, bankedScore, AI.END_FADE) }
                                catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); guide?.flash("السيرفر مش متاح (${e.message?.take(40)}) — بحسب على الموبايل", 2500); null }
                     }
                     // 2) LOCAL fallback (ULTRA can exhaust memory on small phones → level 3 for this round instead of dying)
-                    if (plan == null) {
+                    if (planOpt == null) {
                         if (lvlPref >= 4) guide?.setMessage("ULTRA على الموبايل — بحث شامل (دقايق)… ${lastThreads}/${AI.CORES} كور")
-                        plan = try { AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, true, bankedScore) }
+                        planOpt = try { AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, true, bankedScore) }
                                catch (_: OutOfMemoryError) { System.gc(); guide?.flash("الرام مش كافية لـULTRA — الجولة دي بمستوى الأقصى", 2500); AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, 3, deep, true, bankedScore) }
                     }
+                    val plan: com.thndr.autoplay.engine.Plan = planOpt!!
                     val planSrc = if (useServer && RemotePlanner.lastMs > 0 && plan.moves.isNotEmpty()) "☁ ${RemotePlanner.lastMs / 1000}ث" else "${lastThreads}/${AI.CORES} كور"
                     RemotePlanner.lastMs = 0
                     if (plan.gameOver || plan.moves.isEmpty()) {
@@ -372,9 +373,10 @@ class BotService : Service() {
                 val pieces = scr.tray.map { it?.piece }
                 report("بفكر… (${scr.piecesFound} قطع)"); applyStrategy()
                 val lvlA = prefs.getInt("level", 3).coerceIn(1, 4); val deepA = prefs.getBoolean("deepEnd", true)
-                var plan: com.thndr.autoplay.engine.Plan? = null
-                if (prefs.getBoolean("server", true)) plan = try { RemotePlanner.plan(prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL, scr.board, scr.bonus, pieces, scr.mult, scr.level, lvlA, deepA, bankedScore, AI.END_FADE) } catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); null }
-                if (plan == null) plan = try { AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, lvlA, deepA, true, bankedScore) } catch (_: OutOfMemoryError) { System.gc(); AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, 3, deepA, true, bankedScore) }
+                var planOpt: com.thndr.autoplay.engine.Plan? = null
+                if (prefs.getBoolean("server", true)) planOpt = try { RemotePlanner.plan(prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL, scr.board, scr.bonus, pieces, scr.mult, scr.level, lvlA, deepA, bankedScore, AI.END_FADE) } catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); null }
+                if (planOpt == null) planOpt = try { AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, lvlA, deepA, true, bankedScore) } catch (_: OutOfMemoryError) { System.gc(); AI.plan(scr.board, scr.bonus, pieces, scr.mult, scr.level, 3, deepA, true, bankedScore) }
+                val plan: com.thndr.autoplay.engine.Plan = planOpt!!
                 if (plan.gameOver || plan.moves.isEmpty()) { report("مافيش حركة ممكنة — Game Over"); Thread.sleep(1500); continue }
 
                 val mv = plan.moves[0]; val tp = scr.tray[mv.slot]!!
