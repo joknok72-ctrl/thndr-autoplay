@@ -238,7 +238,11 @@ class BotService : Service() {
                     applyStrategy()
                     val deep = prefs.getBoolean("deepEnd", true)
                     if (deep && ps.level >= 23) guide?.setMessage("بحث أعمق لآخر اللفلات (${ps.level}/25) — زي الموقع بالضبط، استنى شوية…")
-                    val plan = AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, prefs.getInt("level", 3).coerceIn(1, 4), deep, true, bankedScore)
+                    val lvlPref = prefs.getInt("level", 3).coerceIn(1, 4)
+                    if (lvlPref >= 4) guide?.setMessage("ULTRA — بحث شامل (1–3 دقايق للجولة)… ${lastThreads}/${AI.CORES} كور")
+                    // ULTRA can exhaust memory on small phones → fall back to level 3 for this round instead of dying
+                    val plan = try { AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, true, bankedScore) }
+                               catch (_: OutOfMemoryError) { System.gc(); guide?.flash("الرام مش كافية لـULTRA — الجولة دي بمستوى الأقصى", 2500); AI.plan(ps.board, ps.bonus, confirmed, ps.mult, ps.level, 3, deep, true, bankedScore) }
                     if (plan.gameOver || plan.moves.isEmpty()) {
                         runCatching { GameLog.record(this, ps, confirmed, plan, pendingBitmap, "GAME_OVER: no placement for any order") }; pendingBitmap = null
                         guide?.setMessage("مافيش مكان لأي قطعة — Game Over"); report("Game Over"); Thread.sleep(300); continue

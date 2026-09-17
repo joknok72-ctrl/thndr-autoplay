@@ -20,7 +20,7 @@
   // level 3 = MAX: wide beam (a 3-piece round has ≤ ~2000 complete plans, so 96 keeps almost every distinct line alive)
   // level 4 = ULTRA: EXHAUSTIVE — no beam pruning at all (every complete 3-piece plan is generated and evaluated),
   // plus every lookahead knob at its ceiling (see ULTRA below). Nothing deeper exists in this planner.
-  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 }, 4: { beam: 1000000, probes: 12, ultra: true } };
+  const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 }, 4: { beam: 20000, probes: 12, ultra: true } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
               surv: 4.0,      // survival/board-quality weight (scaled by remaining moves)
@@ -230,8 +230,8 @@
     opts = opts || {}; const cfg = LEVELS[opts.level||3] || LEVELS[3];
     // ULTRA profile: every search knob at its ceiling for the duration of this call (restored on exit)
     // (exhaustive plan generation everywhere + wider/longer lookahead; futures kept at a count a 4-core phone finishes in ~30–60 s/level)
-    const ULTRA = { endBeam: 1000000, rollK: 8, rollKFill: 6, rollKPts: 4, rollKOpen: 8, rollM: 8, rollMScale: 3, rollCut: 0,
-                    rollAll: 8, rollHorizon: 3, trayM: 60, trayK: 64, trayKOpen: 32, tray2M: 16, tray2K: 12, lastTrayM: 120, innerSafeK: 8, innerSafeM: 8 };
+    const ULTRA = { endBeam: 20000, rollK: 8, rollKFill: 5, rollKPts: 3, rollKOpen: 8, rollM: 8, rollMScale: 3, rollCut: 0,
+                    rollAll: 8, rollHorizon: 3, trayM: 40, trayK: 32, trayKOpen: 16, tray2M: 12, tray2K: 8, lastTrayM: 120, innerSafeK: 8, innerSafeM: 8 };
     let savedW = null;
     if (cfg.ultra && !opts._inner) { savedW = {}; for (const k in ULTRA) { savedW[k] = W[k]; W[k] = ULTRA[k]; } }
     try { return planCore(board, bonus, pieces, state, opts, cfg); } finally { if (savedW) for (const k in savedW) W[k] = savedW[k]; }
