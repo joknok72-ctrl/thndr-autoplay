@@ -14,15 +14,19 @@ object RemotePlanner {
     const val PROXY_URL = "https://thndr-ai-block.pages.dev"
     var lastMs = 0L
     var lastUrl = ""
+    /** (url, attempt, error) — lets the UI show that a retry is happening instead of looking frozen. */
+    var onRetry: ((String, Int, String) -> Unit)? = null
 
     /** Try the configured URL, then the Cloudflare proxy. */
     fun planAny(baseUrl: String, board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int,
                 level: Int, deep: Boolean, gameScore: Int, fillMoves: Int): Plan {
         val urls = if (baseUrl.trimEnd('/') == PROXY_URL) listOf(PROXY_URL) else listOf(baseUrl, PROXY_URL)
         var last: Exception? = null
-        for (u in urls) {
+        // The server machine can be recycled mid-request (trial hosting) → it answers 503 {retry} or drops the connection.
+        // Retry the same URL a few times (fresh machine in ~2 s) before moving to the Cloudflare route, and only then give up.
+        for (u in urls) for (attempt in 0 until 3) {
             try { val p = plan(u, board, bonus, pieces, mult, gameLevel, level, deep, gameScore, fillMoves); lastUrl = u; return p }
-            catch (e: Exception) { last = e }
+            catch (e: Exception) { last = e; onRetry?.invoke(u, attempt + 1, e.message ?: "?"); Thread.sleep(2500) }
         }
         throw last ?: IllegalStateException("no server")
     }

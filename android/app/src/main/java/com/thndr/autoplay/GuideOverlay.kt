@@ -67,7 +67,7 @@ class GuideOverlay(ctx: Context) : View(ctx) {
     fun hide() { main.post { if (attached) { runCatching { wm.removeView(this) }; attached = false } } }
     fun setPlan(p: PlanView?) { plan = p; if (p != null) message = null; postInvalidate() }
     fun setMessage(m: String?) { message = m; if (m != null) plan = null; postInvalidate() }
-    fun flash(m: String, ms: Long = 1400) { flash = m; flashUntil = System.currentTimeMillis() + ms; postInvalidate() }
+    fun flash(m: String, ms: Long = 3500) { flash = m; flashUntil = System.currentTimeMillis() + ms; postInvalidate() }
     fun clear() { plan = null; message = null; postInvalidate() }
 
     private fun ghostRect(pv: PlanView, s: Step): RectF {
@@ -154,22 +154,44 @@ class GuideOverlay(ctx: Context) : View(ctx) {
         drawFlash(cv, d)
     }
 
+    /** Split text into lines that fit `maxW` at the paint's current size (word-wrap, Arabic-safe: splits on spaces only). */
+    private fun wrap(p: Paint, text: String, maxW: Float): List<String> {
+        val out = ArrayList<String>(); var line = StringBuilder()
+        for (w in text.split(' ')) {
+            val cand = if (line.isEmpty()) w else "$line $w"
+            if (p.measureText(cand) <= maxW || line.isEmpty()) { line = StringBuilder(cand) } else { out.add(line.toString()); line = StringBuilder(w) }
+        }
+        if (line.isNotEmpty()) out.add(line.toString())
+        return out
+    }
+    /** Pick the biggest size (≤ max) whose wrapped text fits in ≤ maxLines, then wrap with it. Never lets text run off-screen. */
+    private fun fit(p: Paint, text: String, maxW: Float, maxSp: Float, minSp: Float, maxLines: Int, d: Float): List<String> {
+        var sp = maxSp
+        while (sp > minSp) { p.textSize = sp * d; if (wrap(p, text, maxW).size <= maxLines) break; sp -= 1f }
+        p.textSize = maxOf(sp, minSp) * d
+        return wrap(p, text, maxW)
+    }
     private fun drawBanner(cv: Canvas, main: String, sub: String?, d: Float) {
         val w = width.toFloat(); val top = 8f * d
         val text = if (sub != null) "$main   $sub" else main
-        pTxt.textSize = 16f * d
-        val tw = pTxt.measureText(text) + 32f * d
-        val hgt = 38f * d
-        cv.drawRoundRect(RectF(w / 2 - tw / 2, top, w / 2 + tw / 2, top + hgt), 19f * d, 19f * d, pTxtBg)
-        cv.drawText(text, w / 2, top + 25f * d, pTxt)
+        val lines = fit(pTxt, text, w - 48f * d, 13f, 10f, 3, d)
+        val lh = pTxt.textSize * 1.25f
+        val tw = (lines.maxOf { pTxt.measureText(it) } + 28f * d).coerceAtMost(w - 8f * d)
+        val hgt = lh * lines.size + 14f * d
+        cv.drawRoundRect(RectF(w / 2 - tw / 2, top, w / 2 + tw / 2, top + hgt), 14f * d, 14f * d, pTxtBg)
+        var y = top + 7f * d + pTxt.textSize
+        for (l in lines) { cv.drawText(l, w / 2, y, pTxt); y += lh }
     }
     private fun drawFlash(cv: Canvas, d: Float) {
         val f = flash ?: return
         if (System.currentTimeMillis() > flashUntil) { flash = null; return }
         val w = width.toFloat(); val cy = height * 0.42f
-        pTxt.textSize = 20f * d
-        val tw = pTxt.measureText(f) + 40f * d
-        cv.drawRoundRect(RectF(w / 2 - tw / 2, cy - 26f * d, w / 2 + tw / 2, cy + 26f * d), 18f * d, 18f * d, pFlashBg)
-        cv.drawText(f, w / 2, cy + 7f * d, pTxt)
+        val lines = fit(pTxt, f, w - 56f * d, 15f, 11f, 4, d)
+        val lh = pTxt.textSize * 1.25f
+        val tw = (lines.maxOf { pTxt.measureText(it) } + 36f * d).coerceAtMost(w - 12f * d)
+        val hh = (lh * lines.size + 18f * d) / 2
+        cv.drawRoundRect(RectF(w / 2 - tw / 2, cy - hh, w / 2 + tw / 2, cy + hh), 16f * d, 16f * d, pFlashBg)
+        var y = cy - hh + 9f * d + pTxt.textSize
+        for (l in lines) { cv.drawText(l, w / 2, y, pTxt); y += lh }
     }
 }

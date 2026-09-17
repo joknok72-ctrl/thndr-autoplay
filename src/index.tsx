@@ -18,10 +18,16 @@ app.get('/health', async (c) => {
   catch (e) { return c.json({ ok: false, error: String(e) }, 502) }
 })
 app.post('/api/plan', async (c) => {
-  try {
-    const r = await fetch(PLAN_SERVER + '/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: await c.req.text(), signal: AbortSignal.timeout(280000) })
-    return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
-  } catch (e) { return c.json({ error: String(e) }, 502) }
+  const body = await c.req.text(); let lastErr = ''
+  // the plan machine may be recycled mid-request (trial account) → retry a few times before giving up
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(PLAN_SERVER + '/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(280000) })
+      if (r.status === 503 || r.status === 502) { lastErr = 'HTTP ' + r.status; await new Promise(res => setTimeout(res, 2500)); continue }
+      return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
+    } catch (e) { lastErr = String(e); await new Promise(res => setTimeout(res, 2500)) }
+  }
+  return c.json({ error: 'plan server unreachable: ' + lastErr }, 502)
 })
 
 app.get('/', (c) => {

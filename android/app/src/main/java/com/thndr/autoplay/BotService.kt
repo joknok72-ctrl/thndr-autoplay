@@ -246,9 +246,10 @@ class BotService : Service() {
                     // 1) SERVER mode: the plan is computed on a real CPU (same ai.js as the website) and the phone only shows the moves.
                     var planOpt: com.thndr.autoplay.engine.Plan? = null
                     if (useServer) {
-                        guide?.setMessage("☁ السيرفر بيحسب الخطة ($lvlName)… ثواني لمستوى 3، حتى دقيقتين لـULTRA")
+                        guide?.setMessage("☁ السيرفر بيحسب الخطة ($lvlName)… ثواني لمستوى 3، حتى دقيقة لـULTRA")
+                        RemotePlanner.onRetry = { u, n, err -> guide?.setMessage("☁ السيرفر بيعيد التشغيل — محاولة $n ${if (u == RemotePlanner.PROXY_URL) "عبر Cloudflare" else ""} ($lvlName)… ${err.take(30)}") }
                         planOpt = try { RemotePlanner.planAny(serverUrl, ps.board, ps.bonus, confirmed, ps.mult, ps.level, lvlPref, deep, bankedScore, AI.END_FADE) }
-                               catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); guide?.flash("السيرفر مش متاح (${e.message?.take(40)}) — بحسب على الموبايل", 2500); null }
+                               catch (e: Exception) { Log.w("Bot", "server plan failed: ${e.message}"); guide?.flash("السيرفر مش متاح بعد كل المحاولات (${e.message?.take(40)}) — بحسب على الموبايل", 4000); null }
                     }
                     // 2) LOCAL fallback (ULTRA can exhaust memory on small phones → level 3 for this round instead of dying)
                     if (planOpt == null) {
