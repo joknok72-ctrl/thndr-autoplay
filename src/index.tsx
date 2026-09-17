@@ -11,6 +11,19 @@ app.get('/sw.js', serveStatic({ path: './public/sw.js' }))
 // Tiny health/API endpoints (the game runs fully client-side)
 app.get('/api/health', (c) => c.json({ ok: true, game: 'THNDR AI Block', levels: 25 }))
 
+// Plan-server proxy: some mobile networks cannot reach fly.dev directly, so the app can call the game domain instead
+const PLAN_SERVER = 'https://thndr-plan.fly.dev'
+app.get('/health', async (c) => {
+  try { const r = await fetch(PLAN_SERVER + '/health', { signal: AbortSignal.timeout(20000) }); return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }) }
+  catch (e) { return c.json({ ok: false, error: String(e) }, 502) }
+})
+app.post('/api/plan', async (c) => {
+  try {
+    const r = await fetch(PLAN_SERVER + '/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: await c.req.text(), signal: AbortSignal.timeout(280000) })
+    return new Response(r.body, { status: r.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
+  } catch (e) { return c.json({ error: String(e) }, 502) }
+})
+
 app.get('/', (c) => {
   return c.html(`<!DOCTYPE html>
 <html lang="ar">

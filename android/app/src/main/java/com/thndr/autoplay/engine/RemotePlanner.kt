@@ -10,7 +10,22 @@ import java.net.URL
  *  Throws on any network/server failure — the caller falls back to the on-device planner. */
 object RemotePlanner {
     const val DEFAULT_URL = "https://thndr-plan.fly.dev"
+    /** Same server behind the game's Cloudflare domain — used automatically when fly.dev is unreachable on the phone's network. */
+    const val PROXY_URL = "https://thndr-ai-block.pages.dev"
     var lastMs = 0L
+    var lastUrl = ""
+
+    /** Try the configured URL, then the Cloudflare proxy. */
+    fun planAny(baseUrl: String, board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int,
+                level: Int, deep: Boolean, gameScore: Int, fillMoves: Int): Plan {
+        val urls = if (baseUrl.trimEnd('/') == PROXY_URL) listOf(PROXY_URL) else listOf(baseUrl, PROXY_URL)
+        var last: Exception? = null
+        for (u in urls) {
+            try { val p = plan(u, board, bonus, pieces, mult, gameLevel, level, deep, gameScore, fillMoves); lastUrl = u; return p }
+            catch (e: Exception) { last = e }
+        }
+        throw last ?: IllegalStateException("no server")
+    }
 
     fun plan(baseUrl: String, board: IntArray, bonus: IntArray, pieces: List<Piece?>, mult: Int, gameLevel: Int,
              level: Int, deep: Boolean, gameScore: Int, fillMoves: Int, timeoutMs: Int = 240_000): Plan {
@@ -28,7 +43,7 @@ object RemotePlanner {
         val t0 = System.currentTimeMillis()
         val conn = url.openConnection() as HttpURLConnection
         try {
-            conn.requestMethod = "POST"; conn.connectTimeout = 15_000; conn.readTimeout = timeoutMs
+            conn.requestMethod = "POST"; conn.connectTimeout = 25_000; conn.readTimeout = timeoutMs
             conn.doOutput = true; conn.setRequestProperty("Content-Type", "application/json")
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = conn.responseCode
@@ -46,9 +61,13 @@ object RemotePlanner {
     }
 
     /** Quick reachability probe (GET /health) — returns server CPU count or -1. */
+    fun pingAny(baseUrl: String): Pair<Int, String> {
+        val a = ping(baseUrl); if (a > 0) return a to baseUrl
+        val b = ping(PROXY_URL); return b to PROXY_URL
+    }
     fun ping(baseUrl: String): Int = try {
         val conn = URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection
-        conn.connectTimeout = 6000; conn.readTimeout = 8000
+        conn.connectTimeout = 15000; conn.readTimeout = 25000
         val txt = conn.inputStream.use { s -> val bo = ByteArrayOutputStream(); s.copyTo(bo); bo.toString("UTF-8") }
         conn.disconnect(); JSONObject(txt).optInt("cpus", 1)
     } catch (_: Exception) { -1 }

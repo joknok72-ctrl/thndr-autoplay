@@ -115,8 +115,8 @@ class MainActivity : AppCompatActivity() {
         lbl.text = "بفحص السيرفر…"
         Thread {
             val url = prefs.getString("serverUrl", RemotePlanner.DEFAULT_URL) ?: RemotePlanner.DEFAULT_URL
-            val cpus = RemotePlanner.ping(url)
-            ui.post { lbl.text = if (cpus > 0) "✔ السيرفر شغال ($cpus كور) — الخطة هتتحسب هناك" else "✖ السيرفر مش متاح — هيحسب على الموبايل تلقائيًا" }
+            val (cpus, via) = RemotePlanner.pingAny(url)
+            ui.post { lbl.text = if (cpus > 0) "✔ السيرفر شغال ($cpus كور)${if (via == RemotePlanner.PROXY_URL && url.trimEnd('/') != via) " — عبر Cloudflare" else ""} — الخطة هتتحسب هناك" else "✖ السيرفر مش متاح (لا fly.dev ولا Cloudflare) — هيحسب على الموبايل تلقائيًا" }
         }.start()
     }
 }

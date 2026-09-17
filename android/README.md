@@ -292,3 +292,5 @@ cd android && gradle assembleRelease   # يحتاج JDK 17 + Android SDK 34
 - سيرفر الخطة: `server/` (Node 22، worker thread لكل طلب، حد 4 دقايق، حد ذاكرة 1.4GB للطلب) — `fly.toml` في الجذر.
 - v4.2.1: السيرفر بيشغّل **ULTRA الكامل الأصلي (v4.1.0 بدون أي تقليل)**: endBeam 1,000,000 · trayM 60 · trayK 64 · trayKOpen 32 · tray2M 16 · tray2K 12 · rollKFill 6 · rollKPts 4.
   النسخة المحدودة (trayM 40/trayK 32…) بتشتغل **بس** لما الحساب يتم على الموبايل نفسه (fallback بدون نت) عشان الرام.
+- v4.2.1: السيرفر دايمًا شغال (مش بينام). ولو شبكة الموبايل مش بتوصل لـ fly.dev، التطبيق بيحوّل تلقائيًا على نفس السيرفر عبر دومين اللعبة
+  `https://thndr-ai-block.pages.dev/api/plan` (Cloudflare proxy). حالة السيرفر في الإعدادات بتقولك المسار المستخدم.
