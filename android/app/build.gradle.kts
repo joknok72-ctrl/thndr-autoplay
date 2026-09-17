@@ -11,8 +11,8 @@ android {
         applicationId = "com.thndr.autoplay"
         minSdk = 26
         targetSdk = 34
-        versionCode = 33
-        versionName = "3.5.1"
+        versionCode = 34
+        versionName = "3.6.0"
     }
 
     buildTypes {

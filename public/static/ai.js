@@ -17,6 +17,7 @@
   // full real piece library with deal weights (for survivability)
   const LIBP = E.LIB_ORDER.filter(k => (E.REAL_W||{})[k] > 0).map(k => ({ p: E.makePiece(k), w: E.REAL_W[k] }));
   const LIBW = LIBP.reduce((a,b)=>a+b.w,0) || 1;
+  // level 3 = MAX: wide beam (a 3-piece round has ≤ ~2000 complete plans, so 96 keeps almost every distinct line alive)
   const LEVELS = { 1: { beam: 6, probes: 6 }, 2: { beam: 14, probes: 9 }, 3: { beam: 32, probes: 12 } };
   const W = Object.assign({ empty: 1, holes: 5, trans: .9, near: 1.6, edge: .25, fit: 6, isl: 2.5, sq3: 1.5, dead: 15,
               kMult: 18,      // value of +1 multiplier per remaining move (≈ average base points of a move)
@@ -38,9 +39,9 @@
               trayM: 40, trayK: 48, trayKOpen: 24, trayCubes: 24, tray2M: 12, tray2K: 8, tray2W: 0.7,   // tray2M>0 = look TWO trays ahead   // NEXT-TRAY SAFETY: re-rank top-K plans by P(a random real tray cannot be placed) (0 = off)
               endCube: 1000,  // REAL RULE: every cube still on the board when level 25 is completed pays 1000
               endFade: 9,     // the end-bonus fades in over the last N moves
-              endBeam: 64,    // beam width used in the last endBeamRem moves (deeper end-game search)
+              endBeam: 128,    // beam width used in the last endBeamRem moves (deeper end-game search)
               endBeamRem: 12,  // moves-remaining threshold that switches to endBeam
-              midRollM: 0, midRollK: 6, midRollLevel: 1,   // mid-game 1-round lookahead (0 = off)
+              midRollM: 0, midRollK: 8, midRollLevel: 1, midRiskSlack: 0.03,   // mid-game 1-round lookahead (MAX level: on)
               rollRounds: 3, rollK: 5, rollKFill: 3, rollKPts: 2, rollKOpen: 6, rollM: 6, rollLevel: 1   // end-game rollouts (last N rounds)
             }, global.AI2_W || global.AI_W || {});
 
@@ -367,26 +368,30 @@
     const midActive = !rollActive && opts.rollout !== false && deep && ((W.midRollM||0) > 0 || danger) && roundsLeft >= 1 && cands.length > 1;
     if (midActive) {
       const MM = danger ? (W.dangerM||4) : W.midRollM, KK = danger ? (W.dangerK||6) : (W.midRollK||6);
-      cands.sort((a,b)=>b.score-a.score);
-      const top = cands.slice(0, KK);
+      // pool: the tray-safe pick + best by (score − risk×cost) so the lookahead only compares plans that are already safe
+      const safeCands = cands.filter(n => n.trayRisk === undefined || n.trayRisk <= (best.trayRisk||0) + (W.midRiskSlack||0.03));
+      safeCands.sort((a,b)=>b.score-a.score);
+      const top = [best]; for (const n of safeCands) { if (top.length >= KK) break; if (!top.includes(n)) top.push(n); }
       let rs = 777 + lvl * 104729; const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
       const futures = [];
       for (let m=0;m<MM;m++) { const ps=[0,1,2].map(()=>{ const p=E.randomPiece(R); p.cells.forEach(c=>c.v=1); return p; }); const op=ps[Math.floor(R()*3)]; op.cells[Math.floor(R()*op.cells.length)].v=2; futures.push(ps); }
       const rem2 = Math.max(0, remAfterRound - 3);
-      let bestAvg = -Infinity, bestNode = null;
-      for (const cand of top) {
+      const deathCost = c => (W.death||0) + gameScore + (W.deathRem||0) * rem2 + rem2 * c.mult * (W.stake||12);
+      // rank candidates on parallel-safe partial sums (common random numbers → fair comparison)
+      const sums = top.map(cand => {
         let sum = 0;
         for (const f of futures) {
           const pl = plan(cand.board, cand.bonus, f, { mult: cand.mult, level: lvl + 1 }, { level: W.midRollLevel||1, rollout: false, deep: false });
-          // A dead future forfeits EVERYTHING still to come: the remaining moves' points, the farmed bonus cells and the
-          // 1000/cube end bonus. Charge a realistic death cost (base + per remaining move) instead of a token penalty.
-          if (pl.gameOver) { sum += cand.pts - ((W.death||0) + gameScore + (W.deathRem||0) * rem2 + rem2 * cand.mult * (W.stake||12)); continue; }
+          // A dead future forfeits EVERYTHING still to come (banked points, farmed bonus cells, 1000/cube end bonus)
+          if (pl.gameOver) { sum += cand.pts - deathCost(cand); continue; }
           const nn = { board: pl.finalBoard, bonus: pl.finalBonus, mult: pl.finalMult, pts: cand.pts + pl.total };
           sum += evaluate(nn, { mult0, remaining: rem2 }, cfg);
         }
-        const avg = sum / futures.length;
-        if (avg > bestAvg) { bestAvg = avg; bestNode = cand; }
-      }
+        // the measured next-tray risk of THIS candidate (from the tray-safety pass) is charged on top
+        return sum / futures.length - (cand.trayRisk||0) * deathCost(cand);
+      });
+      let bestAvg = -Infinity, bestNode = null;
+      for (let i=0;i<top.length;i++) if (sums[i] > bestAvg) { bestAvg = sums[i]; bestNode = top[i]; }
       if (bestNode) best = bestNode;
     }
     return { moves: best.moves, total: best.pts, score: best.score, gameOver: false, finalBoard: best.board, finalBonus: best.bonus, finalMult: best.mult, trayRisk: best.trayRisk };

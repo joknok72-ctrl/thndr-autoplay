@@ -50,6 +50,10 @@ object AI {
     @JvmField var FARM_HI_SCALE = 0.0    // crowding-fade floor for high tiers (0 = same as low tiers)
     @JvmField var CROWD_W = 1.0          // crowding penalty weight (0 = off)
     @JvmField var CROWD0 = 30
+    @JvmField var MID_ROLL_M = 0         // mid-game 1-round lookahead: random next trays (0 = off)
+    @JvmField var MID_ROLL_K = 8
+    @JvmField var MID_ROLL_LEVEL = 1
+    @JvmField var MID_RISK_SLACK = 0.03
     @JvmField var RUN5_W = 0.0           // long-piece room (I5/V5) penalty
     @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
     @JvmField var FARM_SURV = 0.985
@@ -77,7 +81,7 @@ object AI {
     @JvmField var W_CLEAN = 0.0        // clean-board style: reward per empty cell before the fill phase (player's strategy)
     @JvmField var END_CUBE = 1000.0    // REAL RULE: every cube still on the board after level 25 pays 1000 (only if the game is completed)
     @JvmField var END_FADE = 9         // the end-bonus fades in over the last N moves
-    @JvmField var END_BEAM = 64        // wider beam in the last END_BEAM_REM moves (deeper end-game search)
+    @JvmField var END_BEAM = 128        // wider beam in the last END_BEAM_REM moves (deeper end-game search)
     @JvmField var END_BEAM_REM = 12
     @JvmField var ROLL_ROUNDS = 3      // end-game rollouts in the last N rounds
     @JvmField var ROLL_K = 5           // candidates re-ranked by rollout
@@ -161,7 +165,7 @@ object AI {
         return BQ(q, rf, cf, bf, dead, cover, tight, empty, run5v, run5h)
     }
 
-    private class Node(val board: IntArray, val bonus: IntArray, val mult: Int, val pts: Int, val moves: List<Move>) { var score = 0.0 }
+    private class Node(val board: IntArray, val bonus: IntArray, val mult: Int, val pts: Int, val moves: List<Move>) { var score = 0.0; var trayRisk = -1.0 }
 
     /** remaining = moves left in the game AFTER this node. */
     private fun evaluate(node: Node, mult0: Int, remaining: Int, cfg: Cfg): Double {
@@ -471,7 +475,30 @@ object AI {
                 for ((j, i) in order.withIndex()) risk2[i] = r2[j]
             }
             var bestV = Double.NEGATIVE_INFINITY
-            for (i in top.indices) { val risk = risks[i] + (1 - risks[i]) * risk2[i] * TRAY2_W; val v = top[i].score - risk * costs[i]; if (v > bestV) { bestV = v; b = top[i] } }
+            for (i in top.indices) { val risk = risks[i] + (1 - risks[i]) * risk2[i] * TRAY2_W; top[i].trayRisk = risk; val v = top[i].score - risk * costs[i]; if (v > bestV) { bestV = v; b = top[i] } }
+        }
+        // ---- MID-GAME LOOKAHEAD (MAX level): outside the end-game, re-rank the safe candidates by a 1-round rollout with random
+        //      next trays (fast planner) + the heuristic value of the resulting position, minus each candidate's measured tray risk.
+        if (!rollActive && deep && rollout && MID_ROLL_M > 0 && roundsLeft >= 1 && cands.size > 1) {
+            val bRisk = if (b.trayRisk >= 0) b.trayRisk else 0.0
+            val safe = cands.filter { it.trayRisk < 0 || it.trayRisk <= bRisk + MID_RISK_SLACK }.sortedByDescending { it.score }
+            val top = ArrayList<Node>(); top.add(b); for (n in safe) { if (top.size >= MID_ROLL_K) break; if (n !in top) top.add(n) }
+            val rng = java.util.Random(777L + lvl * 104729L)
+            val futures = (0 until MID_ROLL_M).map { randomTray(rng) }
+            val rem2 = (remAfterRound - 3).coerceAtLeast(0)
+            val vals = parallelMap(top) { cand ->
+                val deathCost = DEATH + banked + DEATH_REM * rem2 + rem2 * cand.mult * STAKE
+                var sum = 0.0
+                for (f in futures) {
+                    val pl = planFull(cand.board, cand.bonus, f, cand.mult, lvl + 1, MID_ROLL_LEVEL)
+                    if (pl == null) { sum += cand.pts - deathCost; continue }
+                    val nn = Node(pl.board, pl.bonus, pl.mult, cand.pts + pl.pts, emptyList())
+                    sum += evaluate(nn, mult0, rem2, cfg)
+                }
+                sum / futures.size - (if (cand.trayRisk > 0) cand.trayRisk else 0.0) * deathCost
+            }
+            var bestAvg = Double.NEGATIVE_INFINITY
+            for (i in top.indices) if (vals[i] > bestAvg) { bestAvg = vals[i]; b = top[i] }
         }
         return Plan(b.moves, b.pts, false, b.mult)
     }
