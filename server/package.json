@@ -1,2 +1,2 @@
-{ "name": "thndr-plan-server", "version": "1.1.0", "private": true, "main": "index.js",
+{ "name": "thndr-plan-server", "version": "1.2.0", "private": true, "main": "index.js",
   "scripts": { "start": "node --max-old-space-size=1536 index.js" } }

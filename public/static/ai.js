@@ -235,7 +235,10 @@
     const ULTRA = { endBeam: 20000, rollK: 8, rollKFill: 5, rollKPts: 3, rollKOpen: 8, rollM: 8, rollMScale: 3, rollCut: 0,
                     rollAll: 8, rollHorizon: 3, trayM: 40, trayK: 32, trayKOpen: 16, tray2M: 12, tray2K: 8, lastTrayM: 120, innerSafeK: 8, innerSafeM: 8 };
     let savedW = null;
-    if (cfg.ultra && !opts._inner) { savedW = {}; for (const k in ULTRA) { savedW[k] = W[k]; W[k] = ULTRA[k]; } }
+    // opts.ultraFull = the ORIGINAL unbounded v4.1.0 profile (server only — a phone runs out of RAM on it)
+    const ULTRA_FULL = { endBeam: 1000000, rollKFill: 6, rollKPts: 4, trayM: 60, trayK: 64, trayKOpen: 32, tray2M: 16, tray2K: 12 };
+    const prof = opts.ultraFull ? Object.assign({}, ULTRA, ULTRA_FULL) : ULTRA;
+    if (cfg.ultra && !opts._inner) { savedW = {}; for (const k in prof) { savedW[k] = W[k]; W[k] = prof[k]; } }
     try { return planCore(board, bonus, pieces, state, opts, cfg); } finally { if (savedW) for (const k in savedW) W[k] = savedW[k]; }
   }
   function planCore(board, bonus, pieces, state, opts, cfg) {

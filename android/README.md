@@ -290,3 +290,5 @@ cd android && gradle assembleRelease   # يحتاج JDK 17 + Android SDK 34
 - قياسات على لوحة لفل 2: مستوى 3 ≈ 8 ث على السيرفر · ULTRA ≈ 25–45 ث على السيرفر (كان ~6 دقايق على الموبايل).
 - تسريع المحرك: countPlacements بدون تخصيص ذاكرة + probes بحد 12 → نفس القرارات بالضبط، أسرع ~1.7×.
 - سيرفر الخطة: `server/` (Node 22، worker thread لكل طلب، حد 4 دقايق، حد ذاكرة 1.4GB للطلب) — `fly.toml` في الجذر.
+- v4.2.1: السيرفر بيشغّل **ULTRA الكامل الأصلي (v4.1.0 بدون أي تقليل)**: endBeam 1,000,000 · trayM 60 · trayK 64 · trayKOpen 32 · tray2M 16 · tray2K 12 · rollKFill 6 · rollKPts 4.
+  النسخة المحدودة (trayM 40/trayK 32…) بتشتغل **بس** لما الحساب يتم على الموبايل نفسه (fallback بدون نت) عشان الرام.

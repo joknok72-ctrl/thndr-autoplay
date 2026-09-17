@@ -19,11 +19,11 @@ function plan(req) {
   const pieces = [0, 1, 2].map(i => normPiece((req.pieces || [])[i]));
   const level = Math.min(4, Math.max(1, req.level | 0 || 4));
   const state = { mult: req.mult | 0 || 1, level: req.gameLevel | 0 || 1, score: req.score | 0 };
-  const opts = { level, deep: req.deep !== false, rollout: req.rollout !== false };
+  const opts = { level, deep: req.deep !== false, rollout: req.rollout !== false, ultraFull: req.ultraFull !== false };   // server default: FULL unbounded ULTRA
   if (req.fillMoves) opts.fillMoves = req.fillMoves; if (req.clean !== undefined) opts.clean = req.clean;
   const t0 = Date.now();
   const r = AI.plan(board, bonus, pieces, state, opts);
   return { moves: (r.moves || []).map(m => ({ slot: m.slot, r: m.r, c: m.c, points: m.points | 0, lines: m.lines | 0 })),
-           total: r.total | 0, gameOver: !!r.gameOver, finalMult: r.finalMult || state.mult, trayRisk: r.trayRisk, level, ms: Date.now() - t0 };
+           total: r.total | 0, gameOver: !!r.gameOver, finalMult: r.finalMult || state.mult, trayRisk: r.trayRisk, level, ultraFull: !!opts.ultraFull && level === 4, ms: Date.now() - t0 };
 }
 module.exports = { plan, Engine, AI };
