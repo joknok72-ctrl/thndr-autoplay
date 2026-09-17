@@ -54,13 +54,15 @@ object AI {
     @JvmField var MID_ROLL_K = 8
     @JvmField var MID_ROLL_LEVEL = 1
     @JvmField var MID_RISK_SLACK = 0.03
-    @JvmField var RUN5_W = 0.0           // long-piece room (I5/V5) penalty
+    @JvmField var RUN5_W = 1.0           // long-piece room (I5/V5) penalty
     @JvmField var FARM_MODEL = 0         // 1 = optimal cash-out model
     @JvmField var FARM_SURV = 0.985
     @JvmField var FARM_K = 0.3
     @JvmField var TRAY_M = 40          // NEXT-TRAY SAFETY: sample M random real trays; 0 = off
     @JvmField var TRAY_K = 48          // re-rank the top-K plans by P(next tray cannot be placed)
     @JvmField var TRAY_K_OPEN = 24     // … plus the K most open boards (fewest cubes)
+    @JvmField var ROLL_ALL = 6           // MAX: rollouts at every level (futures); 0 = end-game only
+    @JvmField var ROLL_HORIZON = 2
     @JvmField var ROLL_CUT = 6000.0   // successive halving threshold (per future) in the end-game rollouts
     @JvmField var ROLL_DEATH = 50000.0     // extra penalty for a dead future inside the end-game rollouts
     @JvmField var ROLL_M_SCALE = 2.0   // futures in the last rounds = ROLL_M × ROLL_ROUNDS/roundsLeft × scale
@@ -223,7 +225,8 @@ object AI {
         // real deal distribution). Outside the fill phase, charge that probability × what dying would forfeit.
         var crowd = 0.0
         if (rem >= END_FADE && CROWD_W > 0) { var cubes = 0; for (i in 0 until N * N) if (node.board[i] != 0) cubes++; val x = maxOf(0, cubes - CROWD0) / 15.0; crowd = -x * x * CROWD_W * (stake + DEATH * 0.3) }
-        val run5 = if (rem >= END_FADE && RUN5_W > 0) -((2 - minOf(2, bq.run5v)) + (2 - minOf(2, bq.run5h))) * RUN5_W * (stake + DEATH * 0.3) * 0.05 else 0.0
+        // LONG-PIECE ROOM: no vertical 5-run → a V5 deal (~3.5%) is certain death; one run → a second long piece kills
+        val run5 = if (rem >= END_FADE && RUN5_W > 0) -RUN5_W * (stake + DEATH * 0.3) * ((if (bq.run5v == 0) 0.10 else if (bq.run5v == 1) 0.02 else 0.0) + (if (bq.run5h == 0) 0.10 else if (bq.run5h == 1) 0.02 else 0.0)) else 0.0
         return node.pts + multGain + orangePot + bonusPot + bq.q * survW + endVal - deadPen + surviv + cleanVal + crowd + run5
     }
 
@@ -304,6 +307,13 @@ object AI {
         for (i in idx) { val p = pieces[i]!!; for (rc in Engine.allPlacements(board, p)) { val res = Engine.place(board, nob, p, rc[0], rc[1]); val rest = pieces.toMutableList(); rest[i] = null; if (trayFeasible(res.board, rest)) return true } }
         return false
     }
+    /** REAL level-transition rule for bonus cells (measured on 96 transitions): 3 uncovered & none covered → one grows; else a 50 spawns (≤3). */
+    private fun growBonus(board: IntArray, bonus: IntArray, coveredThisRound: Int, rng: java.util.Random): IntArray {
+        val nb = bonus.copyOf(); val ix = ArrayList<Int>(); for (i in 0 until N * N) if (nb[i] != 0 && board[i] == 0) ix.add(i)
+        if (ix.size >= 3 && coveredThisRound == 0) { val i = ix[rng.nextInt(ix.size)]; val t = TIER.indexOf(nb[i]); if (t >= 0 && t < TIER.size - 1) nb[i] = TIER[t + 1] }
+        else if (ix.size < 3) { val e = ArrayList<Int>(); for (i in 0 until N * N) if (board[i] == 0 && nb[i] == 0) e.add(i); if (e.isNotEmpty()) nb[e[rng.nextInt(e.size)]] = 50 }
+        return nb
+    }
     private fun randomTray(rng: java.util.Random): List<Piece> {
         val ps = (0 until 3).map { randomPiece(rng) }
         val oi = rng.nextInt(3); val op = ps[oi]; val ci = rng.nextInt(op.cells.size)
@@ -371,8 +381,11 @@ object AI {
         val banked = maxOf(0, gameScore).toDouble()   // points already scored — ALL of it is lost on death
         val remAfterRound = (25 - lvl) * 3
         val roundsLeft = 25 - lvl
-        val rollActive = deep && rollout && ROLL_ROUNDS > 0 && roundsLeft in 0 until ROLL_ROUNDS
-        val trayActive = !rollActive && deep && rollout && TRAY_M > 0
+        // DEEP SEARCH EVERYWHERE (MAX level): rollouts at EVERY level — to the finish near the end, ROLL_HORIZON rounds earlier
+        val endPhase = roundsLeft in 0 until ROLL_ROUNDS
+        val rollActive = deep && rollout && ROLL_ROUNDS > 0 && roundsLeft >= 0 && (endPhase || ROLL_ALL > 0)
+        val horizon = if (endPhase) roundsLeft else minOf(roundsLeft, ROLL_HORIZON)
+        val trayActive = !endPhase && deep && rollout && TRAY_M > 0
         var best: Node? = null
         val cands = ArrayList<Node>()
         // MULTI-CORE: the 6 piece orderings are independent → one task per ordering on all available cores
@@ -408,9 +421,9 @@ object AI {
             if (ROLL_K_OPEN > 0) for (n in cands.sortedBy { it.board.count { v -> v != 0 } }) { if (top.size >= ROLL_K + ROLL_K_FILL + ROLL_K_PTS + ROLL_K_OPEN) break; if (n !in top) top.add(n) }
             val rng = java.util.Random(12345L + lvl * 7919L)
             // more futures when fewer rounds remain (same cost): the last round's risk of an unplaceable tray must be sampled well
-            val nFut = maxOf(ROLL_M, Math.round(ROLL_M * (ROLL_ROUNDS.toDouble() / maxOf(1, roundsLeft)) * ROLL_M_SCALE).toInt())
+            val nFut = if (endPhase) maxOf(ROLL_M, Math.round(ROLL_M * (ROLL_ROUNDS.toDouble() / maxOf(1, roundsLeft)) * ROLL_M_SCALE).toInt()) else ROLL_ALL
             val futures = (0 until nFut).map {
-                (0 until roundsLeft).map {
+                (0 until horizon).map {
                     val ps = (0 until 3).map { randomPiece(rng) }
                     val oi = rng.nextInt(3); val op = ps[oi]; val ci = rng.nextInt(op.cells.size)
                     ps.mapIndexed { i, p -> if (i == oi) Piece(p.cells.mapIndexed { j, c -> if (j == ci) Cell(c.r, c.c, 2) else c }) else p }
@@ -429,13 +442,19 @@ object AI {
                 val vals = parallelMap(jobs) { (ci, fi) ->
                     val cand = top[ci]; val f = futures[fi]
                     var bd = cand.board; var bo = cand.bonus; var mu = cand.mult; var pts = cand.pts.toDouble(); var dead = false
-                    for (k in 0 until roundsLeft) {
+                    var covered = 0; for (i in 0 until N * N) if (bonus[i] != 0 && board[i] == 0 && cand.board[i] != 0) covered++
+                    val gr = java.util.Random(31L * fi + lvl)
+                    for (k in 0 until horizon) {
+                        bo = growBonus(bd, bo, covered, gr)   // REAL level-transition rule for bonus cells
                         val isPenult = (lvl + 1 + k) == 24 && INNER_SAFE_K > 0 && k + 1 < f.size
                         val pl = planFull(bd, bo, f[k], mu, lvl + 1 + k, ROLL_LEVEL, if (isPenult) f[k + 1] else null)
                         if (pl == null) { dead = true; break }
+                        covered = 0; for (i in 0 until N * N) if (bo[i] != 0 && bd[i] == 0 && pl.board[i] != 0) covered++
                         bd = pl.board; bo = pl.bonus; mu = pl.mult; pts += pl.pts
                     }
-                    if (!dead) pts += bd.count { it != 0 } * END_CUBE else pts -= ROLL_DEATH + banked
+                    if (dead) pts -= ROLL_DEATH + banked
+                    else if (endPhase) pts += bd.count { it != 0 } * END_CUBE
+                    else pts += evaluate(Node(bd, bo, mu, 0, emptyList()), mu, maxOf(0, remAfterRound - 3 * horizon), cfg)
                     pts
                 }
                 for ((j, v) in vals.withIndex()) sums[jobs[j].first] += v
@@ -443,9 +462,13 @@ object AI {
             }
             if (used > 0) {
                 var bestAvg = Double.NEGATIVE_INFINITY
-                for (ci in alive) { val avg = sums[ci] / used - lastRisk[ci] * (banked + top[ci].pts + LAST_TRAY_LOSS); if (avg > bestAvg) { bestAvg = avg; b = top[ci] } }
+                val rollVal = HashMap<Node, Double>()
+                for (ci in alive) { val avg = sums[ci] / used - lastRisk[ci] * (banked + top[ci].pts + LAST_TRAY_LOSS); rollVal[top[ci]] = avg; if (avg > bestAvg) { bestAvg = avg; b = top[ci] } }
+                // mid-game: the rollout value REPLACES the heuristic score for the evaluated candidates (the safety pass ranks on .score)
+                if (!endPhase && rollVal.isNotEmpty()) { val lo = rollVal.values.minOrNull()!!; for (n in cands) n.score = rollVal[n] ?: minOf(n.score, lo - 1) }
             }
-        } else if (trayActive && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
+        }
+        if (trayActive && roundsLeft >= 1 && cands.size > 1 && b.board.count { it != 0 } >= TRAY_CUBES) {
             // NEXT-TRAY SAFETY: the per-piece "cover" term cannot see that THREE pieces must fit TOGETHER. Sample real trays and
             // charge every top candidate the probability that the next tray has no legal placement (= death) — in parallel.
             cands.sortByDescending { it.score }
@@ -479,7 +502,7 @@ object AI {
         }
         // ---- MID-GAME LOOKAHEAD (MAX level): outside the end-game, re-rank the safe candidates by a 1-round rollout with random
         //      next trays (fast planner) + the heuristic value of the resulting position, minus each candidate's measured tray risk.
-        if (!rollActive && deep && rollout && MID_ROLL_M > 0 && roundsLeft >= 1 && cands.size > 1) {
+        if (!endPhase && !rollActive && deep && rollout && MID_ROLL_M > 0 && roundsLeft >= 1 && cands.size > 1) {
             val bRisk = if (b.trayRisk >= 0) b.trayRisk else 0.0
             val safe = cands.filter { it.trayRisk < 0 || it.trayRisk <= bRisk + MID_RISK_SLACK }.sortedByDescending { it.score }
             val top = ArrayList<Node>(); top.add(b); for (n in safe) { if (top.size >= MID_ROLL_K) break; if (n !in top) top.add(n) }

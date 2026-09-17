@@ -266,7 +266,9 @@ object ScreenParser {
         val pg = mode(strip.toIntArray())
 
         // ---- 2) board rectangle ----
-        val nonbg = BooleanArray(W * H) { dist(px[it], pg) > 9 }
+        // THEME-ADAPTIVE: the board/page contrast differs per theme — use 9 or 4% of the page-bg brightness range, whichever is larger
+        val bgTol = maxOf(9, (mx(pg) * 0.04f).toInt())
+        val nonbg = BooleanArray(W * H) { dist(px[it], pg) > bgTol }
         val gapPx = maxOf(6, W / 30)
         val rowFrac = FloatArray(H); for (y in 0 until H) { var n = 0; val off = y * W; for (x in 0 until W) if (nonbg[off + x]) n++; rowFrac[y] = n / W.toFloat() }
         val rows = (0 until H).filter { rowFrac[it] > 0.7f && rowFrac[it] < 0.975f }
@@ -314,6 +316,14 @@ object ScreenParser {
         }
         fun isSpecial(h: Float) = if (specialHue < 0) h in 15f..70f else hueDist(h, specialHue) < 35f
 
+        // ---- 4b) THEME-ADAPTIVE cube thresholds: learn saturation / brightness of real cubes from the tray area (always has cubes)
+        var cubeSatMin = 100; var cubeLumMin = 170
+        run {
+            val ty0 = minOf(H - 1, (by1 + pitch * 2.0f).toInt()); val ty1 = minOf(H - 1, (by1 + pitch * 6.5f).toInt())
+            val ss = ArrayList<Int>(); val ls = ArrayList<Int>()
+            for (y in ty0..ty1 step 2) for (x in 0 until W step 2) { val p = px[y * W + x]; if (dist(p, pg) > bgTol * 3 && sat(p) >= 40) { ss.add(sat(p)); ls.add(mx(p)) } }
+            if (ss.size >= 200) { ss.sort(); ls.sort(); cubeSatMin = (ss[ss.size / 2] * 0.55f).toInt().coerceIn(45, 100); cubeLumMin = (ls[ls.size / 2] * 0.6f).toInt().coerceIn(90, 170) }
+        }
         // ---- 5) cells ----
         val board = IntArray(N * N); val bonus = IntArray(N * N)
         for (i in 0 until N) for (j in 0 until N) {
@@ -324,8 +334,8 @@ object ScreenParser {
                 val p = px[y * W + x]; tot++
                 val s = sat(p); val l = mx(p)
                 val white = s < 40 && l > 200
-                if (s >= 100 && l >= 170 && !white) { nBlock++; nHue++; if (isSpecial(hue(p))) nSpecial++ }
-                else if (s < 100 && l > cellLum + 50 && !white && dist(p, cellBg) > 90) nText++
+                if (s >= cubeSatMin && l >= cubeLumMin && !white) { nBlock++; nHue++; if (isSpecial(hue(p))) nSpecial++ }
+                else if (s < cubeSatMin && abs(l - cellLum) > 50 && !white && dist(p, cellBg) > 90) nText++
             }
             val idx = i * N + j
             if (nBlock > 0.3 * tot) board[idx] = if (nHue > 0 && nSpecial > nHue / 2) 2 else 1
@@ -340,7 +350,7 @@ object ScreenParser {
         // (d) each slot → bounding box → nr×nc grid by the known pitch → a cell is a cube if >50% of its center patch is mask.
         val ty0 = minOf(H - 1, (by1 + pitch * 2.9f).toInt())
         val th = H - ty0
-        val raw = BooleanArray(W * th) { val y = it / W + ty0; val x = it % W; val p = px[y * W + x]; sat(p) >= 90 && mx(p) >= 120 }
+        val raw = BooleanArray(W * th) { val y = it / W + ty0; val x = it % W; val p = px[y * W + x]; sat(p) >= minOf(90, cubeSatMin) && mx(p) >= minOf(120, cubeLumMin) }
         val hueArr = FloatArray(W * th) { if (raw[it]) hue(px[(it / W + ty0) * W + it % W]) else -1f }
         // main hue = dominant 10° bin among non-special saturated tray pixels, refined to the median of its ±20° neighbourhood
         val bins = IntArray(36)
