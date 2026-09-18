@@ -52,6 +52,30 @@ object GameLog {
 
     fun count() = entries.length()
 
+    /** Snapshot AFTER a single piece was placed (step 1..3 of the current plan): board / bonus / mult / tray + a JPEG.
+     *  This is what lets us see exactly WHEN a bonus cell grows or a new one appears — after which piece, placed where. */
+    fun recordStep(ctx: Context, scr: com.thndr.autoplay.vision.Screen?, step: Int, slot: Int, r: Int, c: Int, piece: com.thndr.autoplay.engine.Piece?, bmp: Bitmap?) {
+        if (dir == null) newGame(ctx)
+        val e = JSONObject()
+        e.put("t", System.currentTimeMillis()); e.put("kind", "step"); e.put("step", step)
+        e.put("placed", JSONObject().put("slot", slot).put("r", r).put("c", c).put("cells", piece?.let { JSONArray(it.cells.map { cc -> "${cc.r},${cc.c},${cc.v}" }) } ?: JSONObject.NULL))
+        if (scr != null) {
+            e.put("level", scr.level); e.put("mult", scr.mult)
+            e.put("board", scr.board.joinToString("")); e.put("bonus", JSONArray(scr.bonus.toList()))
+            e.put("tray", JSONArray(scr.tray.map { tp -> tp?.piece?.let { JSONArray(it.cells.map { cc -> "${cc.r},${cc.c},${cc.v}" }) } ?: JSONObject.NULL }))
+        } else e.put("parse", "failed")
+        if (bmp != null && shots < MAX_SHOTS * 4) {
+            val f = File(dir, "s%03d_%d.jpg".format(entries.length(), step))
+            runCatching {
+                val scale = 720f / bmp.width; val small = Bitmap.createScaledBitmap(bmp, 720, (bmp.height * scale).toInt(), true)
+                FileOutputStream(f).use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
+                e.put("shot", f.name); shots++
+            }
+        }
+        entries.put(e)
+        runCatching { File(dir, "log.json").writeText(JSONObject().put("game", gameId).put("entries", entries).toString()) }
+    }
+
     /** Zip everything and open the share sheet (WhatsApp / Telegram / Drive …). */
     fun share(ctx: Context): Boolean {
         val d = dir ?: return false

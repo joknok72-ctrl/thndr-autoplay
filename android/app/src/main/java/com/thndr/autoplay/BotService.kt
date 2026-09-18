@@ -280,6 +280,14 @@ class BotService : Service() {
                 if (manualNext) {
                     manualNext = false
                     if (steps.isNotEmpty()) {
+                        // RESEARCH LOG: photograph + parse the board right after THIS piece landed (before advancing the step)
+                        runCatching {
+                            val st = steps[cur]
+                            guide?.clear(); overlay?.setHiddenForCapture(true); Thread.sleep(320)
+                            val b = capture(); overlay?.setHiddenForCapture(false)
+                            val sc = try { b?.let { fixHud(ScreenParser.parse(it)) } } catch (_: Exception) { null }
+                            GameLog.recordStep(this, sc, cur + 1, st.trayIndex, st.r, st.c, st.piece, b)
+                        }
                         cur++; movesDone++
                         vibrate(longArrayOf(0, 40))
                         if (cur >= steps.size) { steps = emptyList(); guide?.setMessage("✅ خلصت الجولة — لما القطع الجديدة تظهر اضغط «خطة»"); report("خلصت الجولة") }
