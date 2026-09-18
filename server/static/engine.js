@@ -100,7 +100,12 @@
     for (const r of rows) for (let c=0;c<N;c++) clearedIdx.add(idx(r,c));
     for (const c of cols) for (let r=0;r<N;r++) clearedIdx.add(idx(r,c));
     for (const b of boxes) { const br=(b/3|0)*3, bc=(b%3)*3; for(let r=br;r<br+3;r++) for(let c=bc;c<bc+3;c++) clearedIdx.add(idx(r,c)); }
-    for (const i of clearedIdx) { if (nb[i]===2) orangeCleared++; if (nbonus[i]) { bonusHit += nbonus[i]; nbonus[i] = 0; } nb[i] = 0; }
+    // REAL RULE (game 20260918, L15: 62 x 18 = 1,116 pts, 15X -> 18X): an orange cube adds +1 to the multiplier for EVERY
+    // line it is part of when cleared — row + column + box at once = +3, not +1.
+    for (const i of clearedIdx) {
+      if (nb[i]===2) { const r=(i/N)|0, c=i%N; orangeCleared += (rows.includes(r)?1:0) + (cols.includes(c)?1:0) + (boxes.includes((r/3|0)*3+(c/3|0))?1:0); }
+      if (nbonus[i]) { bonusHit += nbonus[i]; nbonus[i] = 0; } nb[i] = 0;
+    }
     if (opts.bonusMode === 'cover') bonusHit = bonusCovered;
     return { board: nb, bonus: nbonus, rows, cols, boxes, lines: rows.length+cols.length+boxes.length, orangeCleared, yvGain: orangeCleared * (piece.yv||1), bonusHit, cells, clearedIdx: [...clearedIdx] };
   }

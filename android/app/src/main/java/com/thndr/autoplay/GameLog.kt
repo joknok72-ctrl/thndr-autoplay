@@ -39,7 +39,7 @@ object GameLog {
         e.put("plan", JSONArray(plan.moves.map { m -> JSONObject().put("slot", m.slot).put("r", m.r).put("c", m.c).put("pts", m.points).put("lines", m.lines) }))
         e.put("planTotal", plan.total); e.put("note", note)
         if (bmp != null && shots < MAX_SHOTS) {
-            val f = File(dir, "s%03d.jpg".format(entries.length()))
+            val f = File(dir, "s%03d.jpg".format(java.util.Locale.US, entries.length()))
             runCatching {
                 val scale = 720f / bmp.width; val small = Bitmap.createScaledBitmap(bmp, 720, (bmp.height * scale).toInt(), true)
                 FileOutputStream(f).use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
@@ -65,7 +65,7 @@ object GameLog {
             e.put("tray", JSONArray(scr.tray.map { tp -> tp?.piece?.let { JSONArray(it.cells.map { cc -> "${cc.r},${cc.c},${cc.v}" }) } ?: JSONObject.NULL }))
         } else e.put("parse", "failed")
         if (bmp != null && shots < MAX_SHOTS * 4) {
-            val f = File(dir, "s%03d_%d.jpg".format(entries.length(), step))
+            val f = File(dir, "s%03d_%d.jpg".format(java.util.Locale.US, entries.length(), step))
             runCatching {
                 val scale = 720f / bmp.width; val small = Bitmap.createScaledBitmap(bmp, 720, (bmp.height * scale).toInt(), true)
                 FileOutputStream(f).use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
