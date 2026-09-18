@@ -77,8 +77,13 @@ object Engine {
         for (r in rows) for (c in 0 until N) cleared.add(idx(r, c))
         for (c in cols) for (r in 0 until N) cleared.add(idx(r, c))
         for (b in boxes) { val br = (b / 3) * 3; val bc = (b % 3) * 3; for (r in br until br + 3) for (c in bc until bc + 3) cleared.add(idx(r, c)) }
+        // REAL RULE (game 20260918, L15: 62 x 18 = 1,116 pts, 15X -> 18X): an orange cube adds +1 to the multiplier for EVERY
+        // line it belongs to when cleared — row + column + box at once = +3, not +1.
         var orange = 0
-        for (i in cleared) { if (nb[i] == 2) orange++; nb[i] = 0 }
+        for (i in cleared) {
+            if (nb[i] == 2) { val r = i / N; val c = i % N; orange += (if (r in rows) 1 else 0) + (if (c in cols) 1 else 0) + (if (((r / 3) * 3 + c / 3) in boxes) 1 else 0) }
+            nb[i] = 0
+        }
         return PlaceResult(nb, nbonus, rows, cols, boxes, orange, orange * p.yv, bonusHit, cells, cleared.toIntArray())
     }
 
